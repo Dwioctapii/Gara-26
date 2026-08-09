@@ -1,0 +1,883 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>ASV Dashboard - Lintasan A/B/C</title>
+    <!-- RotaMap library – loaded as external file -->
+    <script src="rotamap.js"></script>
+    <style>
+        * {
+            box-sizing: border-box;
+            font-family: Arial, sans-serif;
+        }
+        body {
+            margin: 0;
+            background: #d8d8d8;
+            padding: 16px;
+            padding-bottom: 80px;
+        }
+        .dashboard {
+            background: #ececec;
+            border: 1px solid #bdbdbd;
+            padding: 10px;
+            min-width: 1200px;
+        }
+        .title {
+            text-align: center;
+            font-weight: bold;
+            font-size: 18px;
+            margin-bottom: 10px;
+        }
+        .top-layout {
+            display: grid;
+            grid-template-columns: 2fr 1fr;
+            gap: 10px;
+        }
+        .left-panel {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+        .top-controls {
+            display: grid;
+            grid-template-columns: 1.2fr 1fr 1fr;
+            gap: 10px;
+        }
+        .panel {
+            background: #e7e7e7;
+            border: 1px solid #c6c6c6;
+            padding: 10px;
+        }
+        .panel-title {
+            font-size: 14px;
+            margin-bottom: 10px;
+            font-weight: bold;
+        }
+        .row {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin-bottom: 8px;
+            font-size: 13px;
+        }
+        label {
+            width: 90px;
+            font-size: 13px;
+        }
+        input,
+        select,
+        button {
+            height: 30px;
+            border: 1px solid #b5b5b5;
+            background: #fff;
+        }
+        input,
+        select {
+            flex: 1;
+            padding: 4px 6px;
+        }
+        button {
+            cursor: pointer;
+            padding: 4px 10px;
+            transition: all 0.1s;
+        }
+        .button-grid {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 8px;
+            margin-top: 10px;
+        }
+        button.state-active {
+            background: #0b5e8a !important;
+            color: white !important;
+            border-color: #043a55 !important;
+        }
+        .status-list {
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+        }
+        .status-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 10px;
+            font-size: 13px;
+        }
+        .status-box {
+            width: 90px;
+            text-align: center;
+            color: white;
+            padding: 4px;
+            font-weight: bold;
+            border-radius: 4px;
+        }
+        .ok {
+            background: green;
+        }
+        .bad {
+            background: red;
+        }
+        .vision {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+        .camera {
+            border: 1px solid #bbb;
+            background: #f5f5f5;
+            padding: 5px;
+        }
+        .camera img {
+            width: 100%;
+            height: 240px;
+            object-fit: cover;
+            display: block;
+        }
+        .camera .map-container {
+            width: 100%;
+            height: 240px;
+            background: #1e293b;
+            position: relative;
+            overflow: hidden;
+            border-radius: 4px;
+        }
+        .mid-grid {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 10px;
+            margin-top: 10px;
+        }
+        .black-box {
+            background: #000;
+            color: orange;
+            padding: 10px;
+            min-height: 90px;
+            font-size: 14px;
+            white-space: pre-line;
+            border-radius: 5px;
+        }
+        .mission-panel {
+            display: flex;
+            flex-direction: column;
+            gap: 15px;
+        }
+        .mission-info {
+            display: flex;
+            justify-content: space-between;
+            font-size: 20px;
+        }
+        .mission-label {
+            font-size: 18px;
+        }
+        .mission-status {
+            background: #cfcfcf;
+            padding: 15px;
+            text-align: center;
+            font-weight: bold;
+            font-size: 22px;
+            border-radius: 6px;
+        }
+        .mission-btn {
+            height: 45px;
+            font-size: 18px;
+            border: 1px solid #aaa;
+        }
+        .green-btn {
+            background: #b8efb8;
+        }
+        .yellow-btn {
+            background: #ffe680;
+        }
+        .red-btn {
+            background: #ffb3b3;
+        }
+        .sticky-footer {
+            position: fixed;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            background: #ececec;
+            border-top: 1px solid #bdbdbd;
+            padding: 10px 16px;
+            display: flex;
+            justify-content: space-between;
+            font-size: 14px;
+            z-index: 100;
+        }
+        .blue {
+            color: blue;
+            font-weight: bold;
+        }
+        .red {
+            color: red;
+            font-weight: bold;
+        }
+        .gps-row {
+            display: flex;
+            align-items: center;
+            gap: 15px;
+            margin-top: 15px;
+            flex-wrap: wrap;
+        }
+        .gps-item {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .gps-status {
+            padding: 8px 15px;
+            color: white;
+            font-weight: bold;
+            border-radius: 6px;
+        }
+        .bad-status {
+            background: red;
+        }
+        .good-status {
+            background: green;
+        }
+        .calib-btn {
+            height: 60px;
+            width: 160px;
+        }
+        .second {
+            margin-top: 20px;
+        }
+        .last-calib {
+            margin-top: 20px;
+        }
+        .track-panel {
+            display: flex;
+            align-items: center;
+            gap: 15px;
+            margin-top: 10px;
+            background: #f0f0f0;
+            padding: 8px;
+            border-radius: 5px;
+        }
+        .track-select {
+            display: flex;
+            gap: 10px;
+            align-items: center;
+        }
+        .track-btn {
+            background: #ddd;
+            padding: 5px 12px;
+            border-radius: 20px;
+            cursor: pointer;
+        }
+        .track-btn.active-track {
+            background: #0b5e8a;
+            color: white;
+        }
+        .map-hint {
+            position: absolute;
+            bottom: 6px;
+            right: 8px;
+            font-size: 10px;
+            color: #94a3b8;
+            background: rgba(15, 23, 42, .75);
+            padding: 2px 8px;
+            border-radius: 12px;
+            pointer-events: none;
+            z-index: 10;
+        }
+    </style>
+</head>
+<body>
+    <div class="dashboard">
+        <div class="title">ASV Control Dashboard - Lintasan Lomba</div>
+        <div class="top-layout">
+            <div class="left-panel">
+                <div class="top-controls">
+                    <!-- ASV Controller -->
+                    <div class="panel">
+                        <div class="panel-title">ASV Controller</div>
+                        <div class="row"><label>X Coord:</label><input type="text" id="xCoord" readonly /></div>
+                        <div class="row"><label>Y Coord:</label><input type="text" id="yCoord" readonly /></div>
+                        <div class="button-grid">
+                            <button id="goHomeBtn">Go To Home</button>
+                            <button id="holdPosBtn">Hold Position</button>
+                            <button id="setHomeBtn">Set Home</button>
+                        </div>
+                        <div style="margin-top:15px;">ASV Mode</div>
+                        <div class="button-grid" id="modeGroup">
+                            <button id="modeManualBtn">Manual</button>
+                            <button id="modeAutoBtn">Auto</button>
+                            <button id="modeReturnBtn">Return Home</button>
+                        </div>
+                        <div class="button-grid" id="armGroup">
+                            <button id="armBtn">Arm</button>
+                            <button id="disarmBtn">Disarm</button>
+                            <button id="eStopBtn">E-Stop</button>
+                        </div>
+                        <div style="margin-top:15px;">Testing Options</div>
+                        <div class="button-grid" id="testGroup">
+                            <button id="testStartMissionBtn">Start Mission</button>
+                            <button id="testPauseMissionBtn">Pause Mission</button>
+                            <button id="testStopMissionBtn">Stop Mission</button>
+                        </div>
+                        <div class="button-grid">
+                            <button id="startLoggerBtn">Start Logger</button>
+                            <button id="stopLoggerBtn">Stop Logger</button>
+                            <button id="resetMissionBtn">Reset Mission</button>
+                        </div>
+                    </div>
+
+                    <!-- Mission Control + Track -->
+                    <div class="panel mission-panel">
+                        <div class="panel-title">Mission Control</div>
+                        <div class="mission-info"><div>Current WP:</div><div id="currentWp">0 / 0</div></div>
+                        <div class="mission-label">Mission Status:</div>
+                        <div class="mission-status" id="missionStatusText">IDLE</div>
+                        <div class="track-panel">
+                            <span><strong>Lintasan sekarang:</strong> <span id="currentTrackLabel">A</span></span>
+                            <div class="track-select">
+                                <span>Pilih Lintasan:</span>
+                                <button class="track-btn" data-track="A">A</button>
+                                <button class="track-btn" data-track="B">B</button>
+                                <button class="track-btn" data-track="C">C</button>
+                            </div>
+                        </div>
+                        <button id="missionStartBtn" class="mission-btn green-btn">Start Mission</button>
+                        <button id="missionPauseBtn" class="mission-btn yellow-btn">Pause Mission</button>
+                        <button id="missionStopBtn" class="mission-btn red-btn">Stop Mission</button>
+                    </div>
+
+                    <!-- Sensors -->
+                    <div class="panel">
+                        <div class="panel-title">Sensors Feedback</div>
+                        <div class="status-list" id="sensorList"></div>
+                    </div>
+                </div>
+
+                <!-- Viewing Options -->
+                <div class="panel">
+                    <div class="panel-title">Viewing Options</div>
+                    <div class="row"><label>Atas Cam:</label><select id="atasCamSelect"></select></div>
+                    <div class="row"><label>Bawah Cam:</label><select id="bawahCamSelect"></select></div>
+                </div>
+
+                <div class="mid-grid" id="dataBoxesGrid1"></div>
+                <div class="mid-grid" id="dataBoxesGrid2"></div>
+
+                <!-- GPS Calibration -->
+                <div class="panel">
+                    <div class="panel-title">GPS Calibration</div>
+                    <div class="gps-row">
+                        <div class="gps-item"><span>Status:</span><div id="gpsStatus" class="gps-status bad-status">Not Calibrated</div></div>
+                        <div class="gps-item"><span>Satellites:</span><input type="text" id="satellitesCount" value="0" readonly /></div>
+                        <div class="gps-item"><span>HDOP:</span><input type="text" id="hdopValue" value="0.0" readonly /></div>
+                        <div class="gps-item"><span>Method:</span><select id="calibMethod"></select></div>
+                        <button id="startCalibBtn" class="calib-btn">Start Calibration</button>
+                    </div>
+                    <div class="gps-row second">
+                        <div class="gps-item"><span>Duration:</span><input type="number" id="calibDuration" value="300" /><small>sec</small></div>
+                        <div class="gps-item"><span>Samples:</span><input type="text" id="calibSamples" value="" readonly /></div>
+                        <div class="gps-item"><span id="calibProgress">0 / 300</span></div>
+                        <button id="exportLogBtn">Export Log</button>
+                    </div>
+                    <div class="last-calib" id="lastCalibText">Last Calibration: -</div>
+                </div>
+            </div>
+
+            <!-- Right column: cameras + map -->
+            <div class="vision">
+                <div class="camera">
+                    <div class="panel-title">atas Cam</div>
+                    <img src="Main10.jpg" alt="atas Cam" />
+                </div>
+                <div class="camera">
+                    <div class="panel-title">bawah Cam</div>
+                    <img src="murky-water.jpg" alt="bawah Cam" />
+                </div>
+                <div class="camera">
+                    <div class="panel-title">Map / Waypoints</div>
+                    <div id="mapContainer" class="map-container">
+                        <div id="map" style="width:100%;height:100%;"></div>
+                        <div class="map-hint">drag ⇢ geser · scroll ⇢ zoom</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="sticky-footer">
+        <!-- Footer Diganti Menjadi WebSocket -->
+        <div>WebSocket: <span id="connFooter" class="red">Disconnected</span></div>
+        <div>ASV Status: <span id="asvStatusFooter" class="blue">IDLE</span></div>
+        <div>GPS: <span id="gpsFixFooter" class="red">No Fix</span></div>
+        <div>Depth: <span id="depthFooter">0.00</span> m</div>
+        <div>Speed: <span id="speedFooter">0.00</span> m/s</div>
+        <div>Time: <span id="timeFooter"></span></div>
+    </div>
+
+    <script>
+        // ================================================================
+        //  MASTER STATE (Default values agar UI tidak error)
+        // ================================================================
+        var asvState = {
+            position: { x: 0, y: 0, z: 0 },
+            orientation: { x: 0, y: 0, z: 0, w: 1 },
+            linear: { x: 0, y: 0, z: 0 },
+            angular: { x: 0, y: 0, z: 0 },
+            battery1: { voltage: 12.4, current: 2.1, pressure: 1013, capacity: 5000, used: 120, temp: 35 },
+            thrusterPort: { voltage: 12.0, current: 0.5, capacity: 5000, temp: 40 },
+            thrusterStar: { voltage: 12.0, current: 0.5, capacity: 5000, temp: 40 },
+            gps: { sog: 0, cog: 0, lat: null, lon: null, satellites: 8, hdop: 1.2, fix: false, lastCalib: "-" },
+            speed: 0,
+            depth: 0,
+            sensors: { heartbeat: true, eb: true, pmb1: true, pmb2: true, manip: true, thrusterPort: true, thrusterStar: true, ocs: true, batPort: true, batStar: true },
+            mode: "Manual",
+            arm: "Disarmed",
+            missionState: "IDLE",
+            loggerActive: false,
+            currentTrack: "A"
+        };
+
+        // ================================================================
+        //  1.  ROTAMAP — init once DOM is ready
+        // ================================================================
+        var MAP_CENTER = [-7.069219, 110.304997];
+        var map = null;
+        var boatMarker = null;
+        var boatHeading = 0;
+        var isFollowing = false;
+
+        function initMap() {
+            var container = document.getElementById('map');
+            if (!container) return;
+
+            if (typeof RotaMap === 'undefined') {
+                console.warn('RotaMap not loaded — map disabled');
+                container.innerHTML =
+                    '<div style="color:#94a3b8;text-align:center;padding:80px 0;font-size:13px;">⚠ RotaMap tidak ditemukan</div>';
+                return;
+            }
+
+            map = RotaMap.map('map', {
+                center: MAP_CENTER,
+                zoom: 19,
+                maxZoom: 22,
+                bearing: 0,
+                minZoom: 14
+            });
+
+            RotaMap.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png')
+                .addTo(map);
+
+            RotaMap.circle(MAP_CENTER, {
+                radius: 23,
+                color: '#38bdf8',
+                fillColor: '#38bdf8',
+                fillOpacity: 0.08,
+                weight: 2,
+                dashArray: '5,5'
+            }).addTo(map);
+
+            var boatIcon = RotaMap.divIcon({
+                html: '<div style="font-size:26px;line-height:30px;text-align:center;' +
+                    'filter:drop-shadow(0 2px 3px rgba(0,0,0,.5))">⛵</div>',
+                iconSize: [30, 30],
+                iconAnchor: [15, 15]
+            });
+            boatMarker = RotaMap.marker(MAP_CENTER, {
+                icon: boatIcon,
+                rotation: 0,
+                keepUpright: false
+            }).addTo(map);
+            boatMarker.bindPopup('<b>ASV</b><br>posisi saat ini');
+
+            var path = [
+                [-7.069219, 110.304997],
+                [-7.069050, 110.305160],
+                [-7.068900, 110.305050],
+                [-7.068980, 110.304800]
+            ];
+            RotaMap.polyline(path, {
+                color: '#ef4444',
+                weight: 4,
+                dashArray: '8,8'
+            }).addTo(map);
+
+            var ro = new ResizeObserver(function() {
+                if (map) map.invalidateSize();
+            });
+            ro.observe(document.getElementById('mapContainer'));
+
+            updateMapReadout();
+            map.on('move', updateMapReadout);
+            map.on('zoom', updateMapReadout);
+            map.on('rotate', updateMapReadout);
+        }
+
+        function updateMapReadout() {
+            if (!map) return;
+            var c = map.getCenter();
+            var el = document.getElementById('mapReadout');
+            if (!el) {
+                var container = document.getElementById('mapContainer');
+                if (container) {
+                    var div = document.createElement('div');
+                    div.id = 'mapReadout';
+                    div.style.cssText =
+                        'position:absolute;left:8px;bottom:8px;z-index:5;' +
+                        'font-size:10px;color:#94a3b8;background:rgba(15,23,42,.7);' +
+                        'padding:2px 10px;border-radius:10px;pointer-events:none;';
+                    container.appendChild(div);
+                    el = div;
+                }
+            }
+            if (el) {
+                el.textContent = 'lat ' + c.lat.toFixed(5) + '  lon ' + c.lng.toFixed(5) +
+                    '  zoom ' + map.getZoom().toFixed(1) +
+                    '  bearing ' + Math.round(map.getBearing()) + '°';
+            }
+        }
+
+        // ================================================================
+        //  2.  WEBSOCKET CONNECTION (Menggantikan MQTT)
+        // ================================================================
+        var ws;
+
+        function connectWebSocket() {
+            ws = new WebSocket("ws://192.168.0.4:8765");
+
+            ws.onopen = function() {
+                var cf = document.getElementById("connFooter");
+                cf.innerText = "Connected";
+                cf.className = "blue";
+                console.log("WebSocket Connected");
+            };
+
+            ws.onmessage = function(event) {
+                try {
+                    const dataObj = JSON.parse(event.data);
+                    
+                    // Merging data yang didapat dari WS ke asvState master kita
+                    if (dataObj.lat !== undefined) asvState.gps.lat = parseFloat(dataObj.lat);
+                    if (dataObj.lon !== undefined) asvState.gps.lon = parseFloat(dataObj.lon);
+                    if (dataObj.x !== undefined) asvState.position.x = parseFloat(dataObj.x);
+                    if (dataObj.y !== undefined) asvState.position.y = parseFloat(dataObj.y);
+                    if (dataObj.sog !== undefined) {
+                        asvState.gps.sog = parseFloat(dataObj.sog);
+                        asvState.speed = parseFloat(dataObj.sog);
+                    }
+                    if (dataObj.cog !== undefined) asvState.gps.cog = parseFloat(dataObj.cog);
+                    if (dataObj.kompas !== undefined) {
+                        // updUI melakukan d.orientation.z * 180 / Math.PI
+                        // Karena WS memberi kita derajat, kita kembalikan ke Radian untuk compatibility:
+                        asvState.orientation.z = parseFloat(dataObj.kompas) * (Math.PI / 180); 
+                    }
+                    
+                    asvState.gps.fix = (asvState.gps.lat !== 0 && asvState.gps.lat !== null);
+                    
+                    // Trigger pembaruan UI
+                    updUI(asvState);
+
+                } catch (error) {
+                    console.error("Terjadi kesalahan saat parsing JSON WS:", error);
+                }
+            };
+
+            ws.onclose = function() {
+                var cf = document.getElementById("connFooter");
+                cf.innerText = "Disconnected";
+                cf.className = "red";
+                console.warn("WebSocket Disconnected. Mencoba menyambung kembali...");
+                setTimeout(connectWebSocket, 3000); // Reconnect logic
+            };
+            
+            ws.onerror = function(err) {
+                console.error("WebSocket Error: ", err);
+            };
+        }
+
+        function sendCmd(cmd) {
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                const payload = Object.assign({ id: Date.now().toString(36) }, cmd);
+                ws.send(JSON.stringify(payload));
+                console.log("Command Terkirim via WS:", payload);
+            } else {
+                console.warn("WS tidak terhubung, gagal mengirim: ", cmd);
+            }
+        }
+
+
+        // ================================================================
+        //  3.  UI UPDATE
+        // ================================================================
+        function updUI(d) {
+            var $ = function(id) { return document.getElementById(id); };
+            var setVal = function(id, v) { var el = $(id); if (el) el.value = v; };
+            var setText = function(id, v) { var el = $(id); if (el) el.innerText = v; };
+            var setHTML = function(id, v) { var el = $(id); if (el) el.innerHTML = v; };
+
+            setVal("xCoord", d.position.x.toFixed(3));
+            setVal("yCoord", d.position.y.toFixed(3));
+
+            // ---- data boxes ----
+            var boxData = [
+                ["posBox",
+                    "Position<br>X: " + d.position.x.toFixed(3) + "<br>Y: " + d.position.y.toFixed(3) +
+                    "<br>Z: " + d.position.z.toFixed(3)
+                ],
+                ["oriBox",
+                    "Orientation<br>X: " + d.orientation.x.toFixed(3) + "<br>Y: " + d.orientation.y.toFixed(
+                        3) + "<br>Z: " + d.orientation.z.toFixed(3) + "<br>W: " + d.orientation.w.toFixed(3)
+                ],
+                ["linBox",
+                    "Linear<br>X: " + d.linear.x.toFixed(3) + "<br>Y: " + d.linear.y.toFixed(3) + "<br>Z: " +
+                    d.linear.z.toFixed(3)
+                ],
+                ["angBox",
+                    "Angular<br>X: " + d.angular.x.toFixed(3) + "<br>Y: " + d.angular.y.toFixed(3) +
+                    "<br>Z: " + d.angular.z.toFixed(3)
+                ],
+                ["bat1Box",
+                    "Batt 1<br>Voltage: " + d.battery1.voltage.toFixed(1) + "<br>Current: " + d.battery1
+                    .current.toFixed(1) + "<br>Pressure: " + d.battery1.pressure +
+                    "<br>Capacity: " + d.battery1.capacity + "mAh<br>Used: " + d.battery1.used.toFixed(0) +
+                    "mAh<br>Temperature: " + d.battery1.temp
+                ],
+                ["sogCogBox",
+                    "<b>SOG & COG</b><br>SOG: " + (function() {
+                        var sog = (d.gps && d.gps.sog !== undefined) ? d.gps.sog : d.speed;
+                        return (typeof sog === 'number' ? sog.toFixed(2) : '0.00');
+                    })() + " Knots<br>COG: " + (function() {
+                        var cog = (d.gps && d.gps.cog !== undefined) ? d.gps.cog : (d.orientation.z * 180 / Math.PI);
+                        return (typeof cog === 'number' ? cog.toFixed(1) : '0.0');
+                    })() + "°<br>Kompas (Heading): " + (d.orientation.z * 180 / Math.PI).toFixed(1) + "°"
+                ],
+                ["thrusterPortBox",
+                    "Thrusters (Port)<br>Voltage: " + d.thrusterPort.voltage.toFixed(1) + "<br>Current: " +
+                    d.thrusterPort.current.toFixed(1) + "<br>Capacity: " + d.thrusterPort.capacity +
+                    "mAh<br>Temperature: " + d.thrusterPort.temp
+                ],
+                ["thrusterStarBox",
+                    "Thrusters (Star)<br>Voltage: " + d.thrusterStar.voltage.toFixed(1) + "<br>Current: " +
+                    d.thrusterStar.current.toFixed(1) + "<br>Capacity: " + d.thrusterStar.capacity +
+                    "mAh<br>Temperature: " + d.thrusterStar.temp
+                ]
+            ];
+            boxData.forEach(function(item) { setHTML(item[0], item[1]); });
+
+            // GPS
+            setVal("satellitesCount", d.gps.satellites);
+            setVal("hdopValue", d.gps.hdop.toFixed(1));
+            var gpsEl = $("gpsStatus");
+            if (d.gps.fix) {
+                gpsEl.className = "gps-status good-status";
+                gpsEl.innerText = "Calibrated";
+                setText("gpsFixFooter", "Fix");
+                $("gpsFixFooter").className = "blue";
+            } else {
+                gpsEl.className = "gps-status bad-status";
+                gpsEl.innerText = "Not Calibrated";
+                setText("gpsFixFooter", "No Fix");
+                $("gpsFixFooter").className = "red";
+            }
+            setText("lastCalibText", "Last Calibration: " + d.gps.lastCalib);
+            setText("depthFooter", d.depth.toFixed(1));
+            setText("speedFooter", d.speed.toFixed(2));
+
+            // Sensors
+            var sensorMap = {
+                heartbeat: d.sensors.heartbeat,
+                eb: d.sensors.eb,
+                pmb1: d.sensors.pmb1,
+                pmb2: d.sensors.pmb2,
+                manip: d.sensors.manip,
+                thrusterPort: d.sensors.thrusterPort,
+                thrusterStar: d.sensors.thrusterStar,
+                ocs: d.sensors.ocs,
+                batPort: d.sensors.batPort,
+                batStar: d.sensors.batStar
+            };
+            Object.keys(sensorMap).forEach(function(id) {
+                var el = document.getElementById("sensor_" + id);
+                if (el) {
+                    var ok = sensorMap[id];
+                    el.className = "status-box " + (ok ? "ok" : "bad");
+                    el.innerText = ok ? "OK" : "Not OK";
+                }
+            });
+
+            // Mode & Arm
+            document.querySelectorAll("#modeGroup button, #armGroup button").forEach(function(b) {
+                b.classList.remove("state-active");
+            });
+            var modeMap = { Manual: "modeManualBtn", Auto: "modeAutoBtn", "Return Home": "modeReturnBtn" };
+            if (modeMap[d.mode]) $(modeMap[d.mode]).classList.add("state-active");
+            var armMap = { Armed: "armBtn", Disarmed: "disarmBtn", EStop: "eStopBtn" };
+            if (armMap[d.arm]) $(armMap[d.arm]).classList.add("state-active");
+
+            setText("missionStatusText", d.missionState);
+            setText("asvStatusFooter", d.missionState);
+            if (d.loggerActive) $("startLoggerBtn").classList.add("state-active");
+            else $("stopLoggerBtn").classList.remove("state-active");
+
+            // Track
+            var track = d.currentTrack || "A";
+            setText("currentTrackLabel", track);
+            document.querySelectorAll(".track-btn").forEach(function(b) {
+                b.classList.toggle("active-track", b.getAttribute("data-track") === track);
+            });
+
+            // ---- MAP UPDATE ----
+            if (boatMarker && map) {
+                var lat = d.gps.lat;
+                var lon = d.gps.lon;
+                if (lat == null || lon == null) {
+                    var c = boatMarker.getLatLng();
+                    lat = c.lat;
+                    lon = c.lng;
+                }
+                boatMarker.setLatLng([lat, lon]);
+
+                if (d.orientation && typeof d.orientation.z === 'number') {
+                    boatHeading = d.orientation.z * (180 / Math.PI);
+                    boatMarker.setRotation(boatHeading);
+                }
+
+                if (isFollowing && map) {
+                    map.setBearing(boatHeading);
+                }
+
+                if (lat != null && lon != null && d.gps.fix) {
+                    map.panTo([lat, lon]);
+                }
+                updateMapReadout();
+            }
+        }
+
+        // ================================================================
+        //  4.  INIT UI
+        // ================================================================
+        function initUI() {
+            var container = document.getElementById("sensorList");
+            var sensors = ["heartbeat", "eb", "pmb1", "pmb2", "manip", "thrusterPort", "thrusterStar", "ocs", "batPort", "batStar"];
+            sensors.forEach(function(id) {
+                var div = document.createElement("div");
+                div.className = "status-item";
+                div.innerHTML = "<span>" + id.toUpperCase() + "</span><div id=\"sensor_" + id + "\" class=\"status-box ok\">OK</div>";
+                container.appendChild(div);
+            });
+
+            ["atasCamSelect", "bawahCamSelect"].forEach(function(selId) {
+                var sel = document.getElementById(selId);
+                ["Subscribed", "Unsubscribed"].forEach(function(opt) {
+                    sel.appendChild(new Option(opt, opt));
+                });
+                sel.value = "Subscribed";
+            });
+
+            var methSel = document.getElementById("calibMethod");
+            ["Static (Recommended)", "Kinematic"].forEach(function(m) {
+                methSel.appendChild(new Option(m, m));
+            });
+            methSel.value = "Static (Recommended)";
+
+            document.getElementById("dataBoxesGrid1").innerHTML =
+                '<div class="black-box" id="posBox"><b>Position</b><br>X: 0.000<br>Y: 0.000<br>Z: 0.000</div>' +
+                '<div class="black-box" id="oriBox"><b>Orientation</b><br>X: 0.000<br>Y: 0.000<br>Z: 0.000<br>W: 1.000</div>' +
+                '<div class="black-box" id="linBox"><b>Linear</b><br>X: 0.000<br>Y: 0.000<br>Z: 0.000</div>' +
+                '<div class="black-box" id="angBox"><b>Angular</b><br>X: 0.000<br>Y: 0.000<br>Z: 0.000</div>';
+
+            document.getElementById("dataBoxesGrid2").innerHTML =
+                '<div class="black-box" id="bat1Box"><b>Batt 1</b><br>Voltage: 0.0<br>Current: 0.0<br>Pressure: 0<br>Capacity: 0mAh<br>Used: 0mAh<br>Temperature: 0</div>' +
+                '<div class="black-box" id="sogCogBox"><b>SOG & COG</b><br>SOG: 0.00 m/s<br>COG: 0.0°</div>' +
+                '<div class="black-box" id="thrusterPortBox"><b>Thrusters (Port)</b><br>Voltage: 0.0<br>Current: 0.0<br>Capacity: 0mAh<br>Temperature: 0</div>' +
+                '<div class="black-box" id="thrusterStarBox"><b>Thrusters (Star)</b><br>Voltage: 0.0<br>Current: 0.0<br>Capacity: 0mAh<br>Temperature: 0</div>';
+
+            document.getElementById("currentWp").innerText = "0 / 0";
+            
+            // Panggil sekali saat start untuk set dummy default data UI
+            updUI(asvState);
+        }
+
+        // ================================================================
+        //  5.  BIND BUTTONS
+        // ================================================================
+        function bindAll() {
+            var btnMap = {
+                "modeManualBtn": { command: "set_mode", mode: "Manual" },
+                "modeAutoBtn": { command: "set_mode", mode: "Auto" },
+                "modeReturnBtn": { command: "set_mode", mode: "Return Home" },
+                "armBtn": { command: "arm", action: "arm" },
+                "disarmBtn": { command: "arm", action: "disarm" },
+                "eStopBtn": { command: "arm", action: "estop" },
+                "missionStartBtn": { command: "mission", action: "start" },
+                "missionPauseBtn": { command: "mission", action: "pause" },
+                "missionStopBtn": { command: "mission", action: "stop" },
+                "testStartMissionBtn": { command: "mission", action: "start" },
+                "testPauseMissionBtn": { command: "mission", action: "pause" },
+                "testStopMissionBtn": { command: "mission", action: "stop" },
+                "resetMissionBtn": { command: "reset_mission" },
+                "startLoggerBtn": { command: "logger", action: "start" },
+                "stopLoggerBtn": { command: "logger", action: "stop" },
+                "goHomeBtn": { command: "go_home" },
+                "holdPosBtn": { command: "hold_position" },
+                "setHomeBtn": { command: "set_home" },
+                "exportLogBtn": { command: "export_log" }
+            };
+            Object.keys(btnMap).forEach(function(id) {
+                document.getElementById(id).onclick = function() {
+                    sendCmd(btnMap[id]);
+                };
+            });
+
+            document.getElementById("startCalibBtn").onclick = function() {
+                sendCmd({
+                    command: "calibration",
+                    action: "start",
+                    duration: +document.getElementById("calibDuration").value,
+                    method: document.getElementById("calibMethod").value
+                });
+            };
+
+            document.querySelectorAll(".track-btn").forEach(function(b) {
+                b.onclick = function() {
+                    var t = b.getAttribute("data-track");
+                    if (t === document.getElementById("currentTrackLabel").innerText) {
+                        alert("Sudah di lintasan tersebut.");
+                        return;
+                    }
+                    if (confirm("Pindah ke Lintasan " + t + "?")) {
+                        sendCmd({ command: "set_track", track: t });
+                    }
+                };
+            });
+        }
+
+        // ================================================================
+        //  6.  BOOT
+        // ================================================================
+        window.onload = function() {
+            initUI();
+            bindAll();
+            
+            // Inisialisasi Map
+            setTimeout(initMap, 100);
+            
+            // Connect to WebSocket 
+            connectWebSocket();
+
+            setInterval(function() {
+                document.getElementById("timeFooter").innerText = new Date().toLocaleString();
+            }, 1000);
+
+            window.toggleFollow = function() {
+                isFollowing = !isFollowing;
+                console.log("Follow mode:", isFollowing ? "ON" : "OFF");
+                if (isFollowing && boatMarker && map) {
+                    map.setBearing(boatHeading);
+                }
+            };
+            console.log("ℹ ketik toggleFollow() di console untuk ikut heading kapal");
+        };
+    </script>
+</body>
+</html>
