@@ -134,6 +134,7 @@
             height: 240px;
             object-fit: cover;
             display: block;
+            background: #000;
         }
         .camera .map-container {
             width: 100%;
@@ -386,12 +387,12 @@
             <!-- Right column: cameras + map -->
             <div class="vision">
                 <div class="camera">
-                    <div class="panel-title">atas Cam</div>
-                    <img src="Main10.jpg" alt="atas Cam" />
+                    <div class="panel-title">Atas Cam Feed</div>
+                    <img id="atasCamImg" src="Main10.jpg" alt="Atas Cam Offline" />
                 </div>
                 <div class="camera">
-                    <div class="panel-title">bawah Cam</div>
-                    <img src="murky-water.jpg" alt="bawah Cam" />
+                    <div class="panel-title">Bawah Cam Feed</div>
+                    <img id="bawahCamImg" src="murky-water.jpg" alt="Bawah Cam Offline" />
                 </div>
                 <div class="camera">
                     <div class="panel-title">Map / Waypoints</div>
@@ -405,8 +406,8 @@
     </div>
 
     <div class="sticky-footer">
-        <!-- Footer Diganti Menjadi WebSocket -->
-        <div>WebSocket: <span id="connFooter" class="red">Disconnected</span></div>
+        <div>Telemetri: <span id="connFooter" class="red">Disconnected</span></div>
+        <div>Foto HTTP: <span id="photoFooter" class="red">Menunggu Target...</span></div>
         <div>ASV Status: <span id="asvStatusFooter" class="blue">IDLE</span></div>
         <div>GPS: <span id="gpsFixFooter" class="red">No Fix</span></div>
         <div>Depth: <span id="depthFooter">0.00</span> m</div>
@@ -416,7 +417,7 @@
 
     <script>
         // ================================================================
-        //  MASTER STATE (Default values agar UI tidak error)
+        //  MASTER STATE
         // ================================================================
         var asvState = {
             position: { x: 0, y: 0, z: 0 },
@@ -438,7 +439,7 @@
         };
 
         // ================================================================
-        //  1.  ROTAMAP — init once DOM is ready
+        //  1.  ROTAMAP 
         // ================================================================
         var MAP_CENTER = [-7.069219, 110.304997];
         var map = null;
@@ -452,59 +453,22 @@
 
             if (typeof RotaMap === 'undefined') {
                 console.warn('RotaMap not loaded — map disabled');
-                container.innerHTML =
-                    '<div style="color:#94a3b8;text-align:center;padding:80px 0;font-size:13px;">⚠ RotaMap tidak ditemukan</div>';
+                container.innerHTML = '<div style="color:#94a3b8;text-align:center;padding:80px 0;font-size:13px;">⚠ RotaMap tidak ditemukan</div>';
                 return;
             }
 
-            map = RotaMap.map('map', {
-                center: MAP_CENTER,
-                zoom: 19,
-                maxZoom: 22,
-                bearing: 0,
-                minZoom: 14
-            });
+            map = RotaMap.map('map', { center: MAP_CENTER, zoom: 19, maxZoom: 22, bearing: 0, minZoom: 14 });
+            RotaMap.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map);
+            RotaMap.circle(MAP_CENTER, { radius: 23, color: '#38bdf8', fillColor: '#38bdf8', fillOpacity: 0.08, weight: 2, dashArray: '5,5' }).addTo(map);
 
-            RotaMap.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png')
-                .addTo(map);
-
-            RotaMap.circle(MAP_CENTER, {
-                radius: 23,
-                color: '#38bdf8',
-                fillColor: '#38bdf8',
-                fillOpacity: 0.08,
-                weight: 2,
-                dashArray: '5,5'
-            }).addTo(map);
-
-            var boatIcon = RotaMap.divIcon({
-                html: '<div style="font-size:26px;line-height:30px;text-align:center;' +
-                    'filter:drop-shadow(0 2px 3px rgba(0,0,0,.5))">⛵</div>',
-                iconSize: [30, 30],
-                iconAnchor: [15, 15]
-            });
-            boatMarker = RotaMap.marker(MAP_CENTER, {
-                icon: boatIcon,
-                rotation: 0,
-                keepUpright: false
-            }).addTo(map);
+            var boatIcon = RotaMap.divIcon({ html: '<div style="font-size:26px;line-height:30px;text-align:center;filter:drop-shadow(0 2px 3px rgba(0,0,0,.5))">⛵</div>', iconSize: [30, 30], iconAnchor: [15, 15] });
+            boatMarker = RotaMap.marker(MAP_CENTER, { icon: boatIcon, rotation: 0, keepUpright: false }).addTo(map);
             boatMarker.bindPopup('<b>ASV</b><br>posisi saat ini');
 
-            var path = [
-                [-7.069219, 110.304997],
-                [-7.069050, 110.305160],
-                [-7.068900, 110.305050],
-                [-7.068980, 110.304800]
-            ];
-            RotaMap.polyline(path, {
-                color: '#ef4444',
-                weight: 4,
-                dashArray: '8,8'
-            }).addTo(map);
+            var path = [[-7.069219, 110.304997], [-7.069050, 110.305160], [-7.068900, 110.305050], [-7.068980, 110.304800]];
+            RotaMap.polyline(path, { color: '#ef4444', weight: 4, dashArray: '8,8' }).addTo(map);
 
-            var ro = new ResizeObserver(function() {
-                if (map) map.invalidateSize();
-            });
+            var ro = new ResizeObserver(function() { if (map) map.invalidateSize(); });
             ro.observe(document.getElementById('mapContainer'));
 
             updateMapReadout();
@@ -522,28 +486,21 @@
                 if (container) {
                     var div = document.createElement('div');
                     div.id = 'mapReadout';
-                    div.style.cssText =
-                        'position:absolute;left:8px;bottom:8px;z-index:5;' +
-                        'font-size:10px;color:#94a3b8;background:rgba(15,23,42,.7);' +
-                        'padding:2px 10px;border-radius:10px;pointer-events:none;';
+                    div.style.cssText = 'position:absolute;left:8px;bottom:8px;z-index:5;font-size:10px;color:#94a3b8;background:rgba(15,23,42,.7);padding:2px 10px;border-radius:10px;pointer-events:none;';
                     container.appendChild(div);
                     el = div;
                 }
             }
-            if (el) {
-                el.textContent = 'lat ' + c.lat.toFixed(5) + '  lon ' + c.lng.toFixed(5) +
-                    '  zoom ' + map.getZoom().toFixed(1) +
-                    '  bearing ' + Math.round(map.getBearing()) + '°';
-            }
+            if (el) el.textContent = 'lat ' + c.lat.toFixed(5) + '  lon ' + c.lng.toFixed(5) + '  zoom ' + map.getZoom().toFixed(1) + '  bearing ' + Math.round(map.getBearing()) + '°';
         }
 
         // ================================================================
-        //  2.  WEBSOCKET CONNECTION (Menggantikan MQTT)
+        //  2.  WEBSOCKET CONNECTION (Telemetri Data)
         // ================================================================
         var ws;
 
         function connectWebSocket() {
-            ws = new WebSocket("ws://192.168.0.4:8765");
+            ws = new WebSocket("ws://192.168.0.4:8765"); 
 
             ws.onopen = function() {
                 var cf = document.getElementById("connFooter");
@@ -556,7 +513,6 @@
                 try {
                     const dataObj = JSON.parse(event.data);
                     
-                    // Merging data yang didapat dari WS ke asvState master kita
                     if (dataObj.lat !== undefined) asvState.gps.lat = parseFloat(dataObj.lat);
                     if (dataObj.lon !== undefined) asvState.gps.lon = parseFloat(dataObj.lon);
                     if (dataObj.x !== undefined) asvState.position.x = parseFloat(dataObj.x);
@@ -567,14 +523,19 @@
                     }
                     if (dataObj.cog !== undefined) asvState.gps.cog = parseFloat(dataObj.cog);
                     if (dataObj.kompas !== undefined) {
-                        // updUI melakukan d.orientation.z * 180 / Math.PI
-                        // Karena WS memberi kita derajat, kita kembalikan ke Radian untuk compatibility:
                         asvState.orientation.z = parseFloat(dataObj.kompas) * (Math.PI / 180); 
                     }
-                    
                     asvState.gps.fix = (asvState.gps.lat !== 0 && asvState.gps.lat !== null);
                     
-                    // Trigger pembaruan UI
+                    // Kalau masih kirim base64 dari WS lama, ini bakal niban fotonya
+                    // Tapi di backend Python terbaru kan fitur base64 WS udah lu apus, jadi aman.
+                    if (dataObj.camAtas && document.getElementById("atasCamSelect").value === "Subscribed (WS)") {
+                        document.getElementById("atasCamImg").src = "data:image/jpeg;base64," + dataObj.camAtas;
+                    }
+                    if (dataObj.camBawah && document.getElementById("bawahCamSelect").value === "Subscribed (WS)") {
+                        document.getElementById("bawahCamImg").src = "data:image/jpeg;base64," + dataObj.camBawah;
+                    }
+
                     updUI(asvState);
 
                 } catch (error) {
@@ -587,7 +548,7 @@
                 cf.innerText = "Disconnected";
                 cf.className = "red";
                 console.warn("WebSocket Disconnected. Mencoba menyambung kembali...");
-                setTimeout(connectWebSocket, 3000); // Reconnect logic
+                setTimeout(connectWebSocket, 3000); 
             };
             
             ws.onerror = function(err) {
@@ -605,9 +566,54 @@
             }
         }
 
+        // ================================================================
+        //  3.  HTTP POLLING (LANGSUNG TEMBAK KE DIV ORIGINAL)
+        // ================================================================
+        var fotoAtasSudahAda = false;
+        var fotoBawahSudahAda = false;
+
+        function pantauFotoHTTP() {
+            setInterval(function() {
+                fetch("http://192.168.0.4:8766/status")
+                .then(res => res.json())
+                .then(data => {
+                    var pf = document.getElementById("photoFooter");
+                    
+                    // === JIKA GAMBAR ATAS ADA ===
+                    if (data.atas && !fotoAtasSudahAda) {
+                        // Nembak langsung ke ID atasCamImg bawaan
+                        document.getElementById("atasCamImg").src = "http://192.168.0.4:8766/atas.jpg";
+                        fotoAtasSudahAda = true;
+                        
+                        if(pf) { pf.innerText = "Target Atas Tertangkap!"; pf.className = "blue"; }
+                    } else if (!data.atas) {
+                        fotoAtasSudahAda = false; 
+                    }
+
+                    // === JIKA GAMBAR BAWAH ADA ===
+                    if (data.bawah && !fotoBawahSudahAda) {
+                        // Nembak langsung ke ID bawahCamImg bawaan
+                        document.getElementById("bawahCamImg").src = "http://192.168.0.4:8766/bawah.jpg";
+                        fotoBawahSudahAda = true;
+                        
+                        if(pf) { pf.innerText = "Target Bawah Tertangkap!"; pf.className = "blue"; }
+                    } else if (!data.bawah) {
+                        fotoBawahSudahAda = false;
+                    }
+
+                    if (!data.atas && !data.bawah && pf) {
+                        pf.innerText = "Menunggu Target...";
+                        pf.className = "red";
+                    }
+                })
+                .catch(err => {
+                    // Abaikan kalau HTTP mati
+                });
+            }, 1000); 
+        }
 
         // ================================================================
-        //  3.  UI UPDATE
+        //  4.  UI UPDATE
         // ================================================================
         function updUI(d) {
             var $ = function(id) { return document.getElementById(id); };
@@ -618,53 +624,18 @@
             setVal("xCoord", d.position.x.toFixed(3));
             setVal("yCoord", d.position.y.toFixed(3));
 
-            // ---- data boxes ----
             var boxData = [
-                ["posBox",
-                    "Position<br>X: " + d.position.x.toFixed(3) + "<br>Y: " + d.position.y.toFixed(3) +
-                    "<br>Z: " + d.position.z.toFixed(3)
-                ],
-                ["oriBox",
-                    "Orientation<br>X: " + d.orientation.x.toFixed(3) + "<br>Y: " + d.orientation.y.toFixed(
-                        3) + "<br>Z: " + d.orientation.z.toFixed(3) + "<br>W: " + d.orientation.w.toFixed(3)
-                ],
-                ["linBox",
-                    "Linear<br>X: " + d.linear.x.toFixed(3) + "<br>Y: " + d.linear.y.toFixed(3) + "<br>Z: " +
-                    d.linear.z.toFixed(3)
-                ],
-                ["angBox",
-                    "Angular<br>X: " + d.angular.x.toFixed(3) + "<br>Y: " + d.angular.y.toFixed(3) +
-                    "<br>Z: " + d.angular.z.toFixed(3)
-                ],
-                ["bat1Box",
-                    "Batt 1<br>Voltage: " + d.battery1.voltage.toFixed(1) + "<br>Current: " + d.battery1
-                    .current.toFixed(1) + "<br>Pressure: " + d.battery1.pressure +
-                    "<br>Capacity: " + d.battery1.capacity + "mAh<br>Used: " + d.battery1.used.toFixed(0) +
-                    "mAh<br>Temperature: " + d.battery1.temp
-                ],
-                ["sogCogBox",
-                    "<b>SOG & COG</b><br>SOG: " + (function() {
-                        var sog = (d.gps && d.gps.sog !== undefined) ? d.gps.sog : d.speed;
-                        return (typeof sog === 'number' ? sog.toFixed(2) : '0.00');
-                    })() + " Knots<br>COG: " + (function() {
-                        var cog = (d.gps && d.gps.cog !== undefined) ? d.gps.cog : (d.orientation.z * 180 / Math.PI);
-                        return (typeof cog === 'number' ? cog.toFixed(1) : '0.0');
-                    })() + "°<br>Kompas (Heading): " + (d.orientation.z * 180 / Math.PI).toFixed(1) + "°"
-                ],
-                ["thrusterPortBox",
-                    "Thrusters (Port)<br>Voltage: " + d.thrusterPort.voltage.toFixed(1) + "<br>Current: " +
-                    d.thrusterPort.current.toFixed(1) + "<br>Capacity: " + d.thrusterPort.capacity +
-                    "mAh<br>Temperature: " + d.thrusterPort.temp
-                ],
-                ["thrusterStarBox",
-                    "Thrusters (Star)<br>Voltage: " + d.thrusterStar.voltage.toFixed(1) + "<br>Current: " +
-                    d.thrusterStar.current.toFixed(1) + "<br>Capacity: " + d.thrusterStar.capacity +
-                    "mAh<br>Temperature: " + d.thrusterStar.temp
-                ]
+                ["posBox", "Position<br>X: " + d.position.x.toFixed(3) + "<br>Y: " + d.position.y.toFixed(3) + "<br>Z: " + d.position.z.toFixed(3)],
+                ["oriBox", "Orientation<br>X: " + d.orientation.x.toFixed(3) + "<br>Y: " + d.orientation.y.toFixed(3) + "<br>Z: " + d.orientation.z.toFixed(3) + "<br>W: " + d.orientation.w.toFixed(3)],
+                ["linBox", "Linear<br>X: " + d.linear.x.toFixed(3) + "<br>Y: " + d.linear.y.toFixed(3) + "<br>Z: " + d.linear.z.toFixed(3)],
+                ["angBox", "Angular<br>X: " + d.angular.x.toFixed(3) + "<br>Y: " + d.angular.y.toFixed(3) + "<br>Z: " + d.angular.z.toFixed(3)],
+                ["bat1Box", "Batt 1<br>Voltage: " + d.battery1.voltage.toFixed(1) + "<br>Current: " + d.battery1.current.toFixed(1) + "<br>Pressure: " + d.battery1.pressure + "<br>Capacity: " + d.battery1.capacity + "mAh<br>Used: " + d.battery1.used.toFixed(0) + "mAh<br>Temperature: " + d.battery1.temp],
+                ["sogCogBox", "<b>SOG & COG</b><br>SOG: " + (function() { var sog = (d.gps && d.gps.sog !== undefined) ? d.gps.sog : d.speed; return (typeof sog === 'number' ? sog.toFixed(2) : '0.00'); })() + " Knots<br>COG: " + (function() { var cog = (d.gps && d.gps.cog !== undefined) ? d.gps.cog : (d.orientation.z * 180 / Math.PI); return (typeof cog === 'number' ? cog.toFixed(1) : '0.0'); })() + "°<br>Kompas (Heading): " + (d.orientation.z * 180 / Math.PI).toFixed(1) + "°"],
+                ["thrusterPortBox", "Thrusters (Port)<br>Voltage: " + d.thrusterPort.voltage.toFixed(1) + "<br>Current: " + d.thrusterPort.current.toFixed(1) + "<br>Capacity: " + d.thrusterPort.capacity + "mAh<br>Temperature: " + d.thrusterPort.temp],
+                ["thrusterStarBox", "Thrusters (Star)<br>Voltage: " + d.thrusterStar.voltage.toFixed(1) + "<br>Current: " + d.thrusterStar.current.toFixed(1) + "<br>Capacity: " + d.thrusterStar.capacity + "mAh<br>Temperature: " + d.thrusterStar.temp]
             ];
             boxData.forEach(function(item) { setHTML(item[0], item[1]); });
 
-            // GPS
             setVal("satellitesCount", d.gps.satellites);
             setVal("hdopValue", d.gps.hdop.toFixed(1));
             var gpsEl = $("gpsStatus");
@@ -683,19 +654,7 @@
             setText("depthFooter", d.depth.toFixed(1));
             setText("speedFooter", d.speed.toFixed(2));
 
-            // Sensors
-            var sensorMap = {
-                heartbeat: d.sensors.heartbeat,
-                eb: d.sensors.eb,
-                pmb1: d.sensors.pmb1,
-                pmb2: d.sensors.pmb2,
-                manip: d.sensors.manip,
-                thrusterPort: d.sensors.thrusterPort,
-                thrusterStar: d.sensors.thrusterStar,
-                ocs: d.sensors.ocs,
-                batPort: d.sensors.batPort,
-                batStar: d.sensors.batStar
-            };
+            var sensorMap = { heartbeat: d.sensors.heartbeat, eb: d.sensors.eb, pmb1: d.sensors.pmb1, pmb2: d.sensors.pmb2, manip: d.sensors.manip, thrusterPort: d.sensors.thrusterPort, thrusterStar: d.sensors.thrusterStar, ocs: d.sensors.ocs, batPort: d.sensors.batPort, batStar: d.sensors.batStar };
             Object.keys(sensorMap).forEach(function(id) {
                 var el = document.getElementById("sensor_" + id);
                 if (el) {
@@ -705,10 +664,7 @@
                 }
             });
 
-            // Mode & Arm
-            document.querySelectorAll("#modeGroup button, #armGroup button").forEach(function(b) {
-                b.classList.remove("state-active");
-            });
+            document.querySelectorAll("#modeGroup button, #armGroup button").forEach(function(b) { b.classList.remove("state-active"); });
             var modeMap = { Manual: "modeManualBtn", Auto: "modeAutoBtn", "Return Home": "modeReturnBtn" };
             if (modeMap[d.mode]) $(modeMap[d.mode]).classList.add("state-active");
             var armMap = { Armed: "armBtn", Disarmed: "disarmBtn", EStop: "eStopBtn" };
@@ -719,14 +675,12 @@
             if (d.loggerActive) $("startLoggerBtn").classList.add("state-active");
             else $("stopLoggerBtn").classList.remove("state-active");
 
-            // Track
             var track = d.currentTrack || "A";
             setText("currentTrackLabel", track);
             document.querySelectorAll(".track-btn").forEach(function(b) {
                 b.classList.toggle("active-track", b.getAttribute("data-track") === track);
             });
 
-            // ---- MAP UPDATE ----
             if (boatMarker && map) {
                 var lat = d.gps.lat;
                 var lon = d.gps.lon;
@@ -736,25 +690,18 @@
                     lon = c.lng;
                 }
                 boatMarker.setLatLng([lat, lon]);
-
                 if (d.orientation && typeof d.orientation.z === 'number') {
                     boatHeading = d.orientation.z * (180 / Math.PI);
                     boatMarker.setRotation(boatHeading);
                 }
-
-                if (isFollowing && map) {
-                    map.setBearing(boatHeading);
-                }
-
-                if (lat != null && lon != null && d.gps.fix) {
-                    map.panTo([lat, lon]);
-                }
+                if (isFollowing && map) map.setBearing(boatHeading);
+                if (lat != null && lon != null && d.gps.fix) map.panTo([lat, lon]);
                 updateMapReadout();
             }
         }
 
         // ================================================================
-        //  4.  INIT UI
+        //  5.  INIT UI & CAMERA LOGIC
         // ================================================================
         function initUI() {
             var container = document.getElementById("sensorList");
@@ -768,16 +715,27 @@
 
             ["atasCamSelect", "bawahCamSelect"].forEach(function(selId) {
                 var sel = document.getElementById(selId);
-                ["Subscribed", "Unsubscribed"].forEach(function(opt) {
+                ["Subscribed (WS)", "Live Stream (HTTP)", "Unsubscribed"].forEach(function(opt) {
                     sel.appendChild(new Option(opt, opt));
                 });
-                sel.value = "Subscribed";
+                sel.value = "Subscribed (WS)"; 
+                
+                sel.onchange = function() {
+                    var imgId = (selId === "atasCamSelect") ? "atasCamImg" : "bawahCamImg";
+                    var imgEl = document.getElementById(imgId);
+                    
+                    if (this.value === "Unsubscribed") {
+                        imgEl.src = (selId === "atasCamSelect") ? "Main10.jpg" : "murky-water.jpg"; 
+                    } else if (this.value === "Live Stream (HTTP)") {
+                        var streamPort = (selId === "atasCamSelect") ? "8081" : "8082"; 
+                        var streamUrl = "http://192.168.0.4:" + streamPort + "/stream";
+                        imgEl.src = streamUrl;
+                    }
+                };
             });
 
             var methSel = document.getElementById("calibMethod");
-            ["Static (Recommended)", "Kinematic"].forEach(function(m) {
-                methSel.appendChild(new Option(m, m));
-            });
+            ["Static (Recommended)", "Kinematic"].forEach(function(m) { methSel.appendChild(new Option(m, m)); });
             methSel.value = "Static (Recommended)";
 
             document.getElementById("dataBoxesGrid1").innerHTML =
@@ -793,13 +751,11 @@
                 '<div class="black-box" id="thrusterStarBox"><b>Thrusters (Star)</b><br>Voltage: 0.0<br>Current: 0.0<br>Capacity: 0mAh<br>Temperature: 0</div>';
 
             document.getElementById("currentWp").innerText = "0 / 0";
-            
-            // Panggil sekali saat start untuk set dummy default data UI
             updUI(asvState);
         }
 
         // ================================================================
-        //  5.  BIND BUTTONS
+        //  6.  BIND BUTTONS
         // ================================================================
         function bindAll() {
             var btnMap = {
@@ -824,47 +780,34 @@
                 "exportLogBtn": { command: "export_log" }
             };
             Object.keys(btnMap).forEach(function(id) {
-                document.getElementById(id).onclick = function() {
-                    sendCmd(btnMap[id]);
-                };
+                document.getElementById(id).onclick = function() { sendCmd(btnMap[id]); };
             });
 
             document.getElementById("startCalibBtn").onclick = function() {
-                sendCmd({
-                    command: "calibration",
-                    action: "start",
-                    duration: +document.getElementById("calibDuration").value,
-                    method: document.getElementById("calibMethod").value
-                });
+                sendCmd({ command: "calibration", action: "start", duration: +document.getElementById("calibDuration").value, method: document.getElementById("calibMethod").value });
             };
 
             document.querySelectorAll(".track-btn").forEach(function(b) {
                 b.onclick = function() {
                     var t = b.getAttribute("data-track");
-                    if (t === document.getElementById("currentTrackLabel").innerText) {
-                        alert("Sudah di lintasan tersebut.");
-                        return;
-                    }
-                    if (confirm("Pindah ke Lintasan " + t + "?")) {
-                        sendCmd({ command: "set_track", track: t });
-                    }
+                    if (t === document.getElementById("currentTrackLabel").innerText) { alert("Sudah di lintasan tersebut."); return; }
+                    if (confirm("Pindah ke Lintasan " + t + "?")) { sendCmd({ command: "set_track", track: t }); }
                 };
             });
         }
 
         // ================================================================
-        //  6.  BOOT
+        //  7.  BOOT
         // ================================================================
         window.onload = function() {
             initUI();
             bindAll();
             
-            // Inisialisasi Map
             setTimeout(initMap, 100);
             
-            // Connect to WebSocket 
-            connectWebSocket();
-
+            connectWebSocket(); 
+            pantauFotoHTTP();   
+            
             setInterval(function() {
                 document.getElementById("timeFooter").innerText = new Date().toLocaleString();
             }, 1000);
@@ -872,11 +815,8 @@
             window.toggleFollow = function() {
                 isFollowing = !isFollowing;
                 console.log("Follow mode:", isFollowing ? "ON" : "OFF");
-                if (isFollowing && boatMarker && map) {
-                    map.setBearing(boatHeading);
-                }
+                if (isFollowing && boatMarker && map) map.setBearing(boatHeading);
             };
-            console.log("ℹ ketik toggleFollow() di console untuk ikut heading kapal");
         };
     </script>
 </body>
