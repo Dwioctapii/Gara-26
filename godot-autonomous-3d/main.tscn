@@ -1,0 +1,130 @@
+[gd_scene load_steps=6 format=3]
+
+[ext_resource type="Script" path="res://scripts/main.gd" id="1_main"]
+[ext_resource type="Script" path="res://scripts/navigation_simulation.gd" id="2_sim"]
+[ext_resource type="Script" path="res://scripts/world_3d.gd" id="3_world"]
+[ext_resource type="Script" path="res://scripts/minimap.gd" id="4_map"]
+[ext_resource type="Script" path="res://scripts/mavlink_listener.gd" id="5_mav"]
+
+[node name="Main" type="Node"]
+script = ExtResource("1_main")
+
+[node name="Simulation" type="Node" parent="."]
+script = ExtResource("2_sim")
+
+[node name="MavlinkListener" type="Node" parent="."]
+script = ExtResource("5_mav")
+simulation_path = NodePath("../Simulation")
+
+[node name="World3D" type="Node3D" parent="."]
+script = ExtResource("3_world")
+simulation_path = NodePath("../Simulation")
+
+[node name="UI" type="CanvasLayer" parent="."]
+
+[node name="Title" type="Label" parent="UI"]
+offset_left = 20.0
+offset_top = 18.0
+offset_right = 550.0
+offset_bottom = 53.0
+theme_override_colors/font_color = Color(0.65, 0.9, 1, 1)
+theme_override_font_sizes/font_size = 24
+text = "ASV 3D + 2D TRAJECTORY"
+
+[node name="Status" type="Label" parent="UI"]
+offset_left = 22.0
+offset_top = 65.0
+offset_right = 430.0
+offset_bottom = 330.0
+theme_override_colors/font_color = Color(0.92, 0.96, 1, 1)
+theme_override_font_sizes/font_size = 15
+text = "Initializing..."
+
+[node name="MavlinkDebug" type="Label" parent="UI"]
+layout_mode = 0
+anchor_left = 1.0
+anchor_right = 1.0
+offset_left = -460.0
+offset_top = 18.0
+offset_right = -20.0
+offset_bottom = 370.0
+grow_horizontal = 0
+theme_override_colors/font_color = Color(0.78, 1, 0.78, 1)
+theme_override_font_sizes/font_size = 14
+text = "MAVLink debug initializing..."
+
+[node name="Help" type="Label" parent="UI"]
+offset_left = 22.0
+anchor_top = 1.0
+anchor_bottom = 1.0
+offset_top = -186.0
+offset_right = 480.0
+offset_bottom = -18.0
+theme_override_colors/font_color = Color(0.78, 0.84, 0.9, 1)
+theme_override_font_sizes/font_size = 14
+text = "PLAY MODE\nT  Demo: autonomous trajectory\nB  Real: listen to MAVLink UDP 14550\n\nCONTROLS\nW/A/S/D  Move selected buoy\nLEFT/RIGHT  Select buoy pair\nTAB  Pair/single    Q  Red/green\nSPACE  Noise    R  Reset    P  Pause    C  Camera"
+
+[node name="Map" type="Control" parent="UI"]
+custom_minimum_size = Vector2(440, 310)
+layout_mode = 3
+anchors_preset = 3
+anchor_left = 1.0
+anchor_top = 1.0
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_left = -460.0
+offset_top = -330.0
+offset_right = -20.0
+offset_bottom = -20.0
+grow_horizontal = 0
+grow_vertical = 0
+mouse_filter = 2
+script = ExtResource("4_map")
+simulation_path = NodePath("../../Simulation")
+
+[node name="ModeNotice" type="Label" parent="UI"]
+layout_mode = 0
+anchors_preset = 10
+anchor_right = 1.0
+offset_left = 430.0
+offset_top = 18.0
+offset_right = -430.0
+offset_bottom = 54.0
+grow_horizontal = 2
+theme_override_colors/font_color = Color(1, 0.9, 0.3, 1)
+theme_override_colors/font_outline_color = Color(0.02, 0.03, 0.05, 1)
+theme_override_constants/outline_size = 6
+theme_override_font_sizes/font_size = 18
+text = "WAITING FOR MODE"
+horizontal_alignment = 1
+
+[node name="SelectionOverlay" type="ColorRect" parent="UI"]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 2
+color = Color(0.015, 0.025, 0.045, 0.92)
+
+[node name="Prompt" type="Label" parent="UI/SelectionOverlay"]
+layout_mode = 1
+anchors_preset = 8
+anchor_left = 0.5
+anchor_top = 0.5
+anchor_right = 0.5
+anchor_bottom = 0.5
+offset_left = -360.0
+offset_top = -145.0
+offset_right = 360.0
+offset_bottom = 145.0
+grow_horizontal = 2
+grow_vertical = 2
+theme_override_colors/font_color = Color(0.85, 0.95, 1, 1)
+theme_override_colors/font_outline_color = Color(0, 0, 0, 1)
+theme_override_constants/outline_size = 8
+theme_override_font_sizes/font_size = 24
+text = "ASV SIMULATOR\n\nCHOOSE PLAY MODE\n\n[T]  DEMO / AUTONOMOUS\nShip moves automatically along the yellow path\n\n[B]  REAL / MAVLINK\nWait for LOCAL_POSITION_NED on UDP port 14550"
+horizontal_alignment = 1
+vertical_alignment = 1
