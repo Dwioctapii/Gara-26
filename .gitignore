@@ -1,1 +1,5 @@
 .vscode
+server/data/
+server/.env
+__pycache__/
+*.pyc
