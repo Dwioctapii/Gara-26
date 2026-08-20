@@ -1,0 +1,1 @@
+# isinya itu server http, contoh req untuk gambar foto atas atau bawah, dan bisa req mengganti state contoh button atau aren

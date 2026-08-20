@@ -1,0 +1,1 @@
+#isinya itu server yang me broadcast state state sekarang, note : ambil hasil contoh seperti di folder tester karena itu yang sudah bersih
