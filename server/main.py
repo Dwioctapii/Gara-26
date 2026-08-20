@@ -1,6 +1,11 @@
 """Run HTTP, WebSocket, and MAVLink workers."""
-import asyncio, threading
+import asyncio, threading, os
 from mavlink_bridge import MavlinkBridge
+
+os.environ["ASV_HTTP_HOST"] = "192.168.0.4"
+os.environ["ASV_WS_HOST"] = "192.168.0.4"
+
+
 from server_http_asv import serve as http
 from server_websocket import serve as websocket
 
