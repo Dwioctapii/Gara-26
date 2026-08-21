@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>ASV Dashboard - Lintasan A/B/C</title>
+    <title>ASV Dashboard - Lintasan A/B</title>
     <!-- RotaMap library – loaded as external file -->
     <script src="rotamap.js"></script>
     <style>
@@ -285,9 +285,89 @@
             pointer-events: none;
             z-index: 10;
         }
+        .uger-corner-brand {
+            position: fixed; top: 12px; left: 18px; z-index: 20;
+            display: flex; align-items: center; gap: 9px; opacity: 0;
+            animation: cornerBrandIn .4s ease-out 3.7s forwards;
+        }
+        .uger-corner-brand img { width: 38px; height: 38px; object-fit: contain; }
+        .uger-brand-label { white-space: nowrap; font-size: 17px; font-weight: 800; letter-spacing: .2px; }
+        .uger-word { color: #123b67; }
+        .hydrotech-word { color: #8b2635; }
+        .boot-overlay {
+            position: fixed; inset: 0; z-index: 9999; display: grid; place-items: center;
+            background: #f3f4f6; animation: bootOverlayOut .5s ease-in 3.2s forwards;
+        }
+        .boot-brand {
+            position: relative; display: flex; align-items: center; justify-content: center;
+            width: max-content; height: 110px; padding: 0; gap: 0;
+            transform: scale(2.5); transform-origin: center;
+        }
+        .boot-logo {
+            position: relative; flex: 0 0 92px; width: 92px; height: 92px; object-fit: contain;
+        }
+        .boot-label {
+            position: relative; width: max-content; max-width: 0; overflow: hidden; opacity: 0; transform: translateX(-10px);
+            white-space: nowrap; font-size: 29px; font-weight: 850; letter-spacing: .3px;
+            animation: bootLabelIn 1.5s cubic-bezier(.22,.8,.28,1) 1s forwards;
+        }
+        @keyframes bootLabelIn {
+            from { max-width: 0; opacity: 0; transform: translateX(-10px); }
+            to { max-width: 400px; opacity: 1; transform: translateX(0); }
+        }
+        @keyframes bootOverlayOut { to { opacity: 0; visibility: hidden; pointer-events: none; } }
+        @keyframes cornerBrandIn { from { opacity: 0; transform: translateY(-6px); } to { opacity: 1; transform: translateY(0); } }
+        @media (prefers-reduced-motion: reduce) {
+            .boot-logo, .boot-label, .boot-overlay, .uger-corner-brand { animation-duration: .01ms; }
+        }
+        .gps-compass-row {
+            display: grid;
+            grid-template-columns: minmax(0, 2fr) minmax(220px, 1fr);
+            gap: 12px;
+            align-items: stretch;
+        }
+        .gps-compass-row > .panel { margin: 0; }
+        .compass-panel { display: flex; flex-direction: column; }
+        .compass-stage {
+            position: relative;
+            width: min(119px, 100%);
+            aspect-ratio: 1;
+            margin: auto;
+            background: transparent;
+        }
+        .compass-stage img {
+            position: absolute;
+            inset: 0;
+            width: 100%;
+            height: 100%;
+            object-fit: contain;
+            transform-origin: 50% 50%;
+            transform: rotate(0deg);
+            transition: transform .35s linear;
+        }
+        .compass-value {
+            margin-top: 7px;
+            text-align: center;
+            font-size: 16px;
+            font-weight: 800;
+            color: #123b67;
+        }
+        @media (max-width: 760px) {
+            .gps-compass-row { grid-template-columns: 1fr; }
+        }
     </style>
 </head>
 <body>
+    <div class="boot-overlay" aria-label="UGER Hydrotech sedang memuat">
+        <div class="boot-brand">
+            <img class="boot-logo" src="logo.svg" alt="Logo UGER Hydrotech" />
+            <div class="boot-label"><span class="uger-word">UGER</span> <span class="hydrotech-word">Hydrotech</span></div>
+        </div>
+    </div>
+    <div class="uger-corner-brand">
+        <img src="logo.svg" alt="Logo UGER Hydrotech" />
+        <div class="uger-brand-label"><span class="uger-word">UGER</span> <span class="hydrotech-word">Hydrotech</span></div>
+    </div>
     <div class="dashboard">
         <div class="title">ASV Control Dashboard - Lintasan Lomba</div>
         <div class="top-layout">
@@ -298,32 +378,11 @@
                         <div class="panel-title">ASV Controller</div>
                         <div class="row"><label>X Coord:</label><input type="text" id="xCoord" readonly /></div>
                         <div class="row"><label>Y Coord:</label><input type="text" id="yCoord" readonly /></div>
-                        <div class="button-grid">
-                            <button id="goHomeBtn">Go To Home</button>
-                            <button id="holdPosBtn">Hold Position</button>
-                            <button id="setHomeBtn">Set Home</button>
-                        </div>
-                        <div style="margin-top:15px;">ASV Mode</div>
-                        <div class="button-grid" id="modeGroup">
-                            <button id="modeManualBtn">Manual</button>
-                            <button id="modeAutoBtn">Auto</button>
-                            <button id="modeReturnBtn">Return Home</button>
-                        </div>
+                        <div style="margin-top:15px;">Vehicle Safety</div>
                         <div class="button-grid" id="armGroup">
                             <button id="armBtn">Arm</button>
                             <button id="disarmBtn">Disarm</button>
                             <button id="eStopBtn">E-Stop</button>
-                        </div>
-                        <div style="margin-top:15px;">Testing Options</div>
-                        <div class="button-grid" id="testGroup">
-                            <button id="testStartMissionBtn">Start Mission</button>
-                            <button id="testPauseMissionBtn">Pause Mission</button>
-                            <button id="testStopMissionBtn">Stop Mission</button>
-                        </div>
-                        <div class="button-grid">
-                            <button id="startLoggerBtn">Start Logger</button>
-                            <button id="stopLoggerBtn">Stop Logger</button>
-                            <button id="resetMissionBtn">Reset Mission</button>
                         </div>
                     </div>
 
@@ -339,7 +398,6 @@
                                 <span>Pilih Lintasan:</span>
                                 <button class="track-btn" data-track="A">A</button>
                                 <button class="track-btn" data-track="B">B</button>
-                                <button class="track-btn" data-track="C">C</button>
                             </div>
                         </div>
                         <button id="missionStartBtn" class="mission-btn green-btn">Start Mission</button>
@@ -354,33 +412,28 @@
                     </div>
                 </div>
 
-                <!-- Viewing Options -->
-                <div class="panel">
-                    <div class="panel-title">Viewing Options</div>
-                    <div class="row"><label>Atas Cam:</label><select id="atasCamSelect"></select></div>
-                    <div class="row"><label>Bawah Cam:</label><select id="bawahCamSelect"></select></div>
-                </div>
-
                 <div class="mid-grid" id="dataBoxesGrid1"></div>
                 <div class="mid-grid" id="dataBoxesGrid2"></div>
 
-                <!-- GPS Calibration -->
-                <div class="panel">
-                    <div class="panel-title">GPS Calibration</div>
-                    <div class="gps-row">
-                        <div class="gps-item"><span>Status:</span><div id="gpsStatus" class="gps-status bad-status">Not Calibrated</div></div>
-                        <div class="gps-item"><span>Satellites:</span><input type="text" id="satellitesCount" value="0" readonly /></div>
-                        <div class="gps-item"><span>HDOP:</span><input type="text" id="hdopValue" value="0.0" readonly /></div>
-                        <div class="gps-item"><span>Method:</span><select id="calibMethod"></select></div>
-                        <button id="startCalibBtn" class="calib-btn">Start Calibration</button>
+                <div class="gps-compass-row">
+                    <!-- GPS Status -->
+                    <div class="panel">
+                        <div class="panel-title">GPS Status</div>
+                        <div class="gps-row">
+                            <div class="gps-item"><span>Status:</span><div id="gpsStatus" class="gps-status bad-status">Not Calibrated</div></div>
+                            <div class="gps-item"><span>Satellites:</span><input type="text" id="satellitesCount" value="0" readonly /></div>
+                            <div class="gps-item"><span>HDOP:</span><input type="text" id="hdopValue" value="0.0" readonly /></div>
+                        </div>
+                        <div class="last-calib" id="lastCalibText">Last Calibration: -</div>
                     </div>
-                    <div class="gps-row second">
-                        <div class="gps-item"><span>Duration:</span><input type="number" id="calibDuration" value="300" /><small>sec</small></div>
-                        <div class="gps-item"><span>Samples:</span><input type="text" id="calibSamples" value="" readonly /></div>
-                        <div class="gps-item"><span id="calibProgress">0 / 300</span></div>
-                        <button id="exportLogBtn">Export Log</button>
+                    <!-- Compass -->
+                    <div class="panel compass-panel">
+                        <div class="panel-title">Kompas</div>
+                        <div class="compass-stage">
+                            <img id="compassRose" src="compass-rose.png" alt="Mawar kompas Utara Timur Selatan Barat" />
+                        </div>
+                        <div class="compass-value" id="compassValue">0.0°</div>
                     </div>
-                    <div class="last-calib" id="lastCalibText">Last Calibration: -</div>
                 </div>
             </div>
 
@@ -388,11 +441,11 @@
             <div class="vision">
                 <div class="camera">
                     <div class="panel-title">Atas Cam Feed</div>
-                    <img id="atasCamImg" src="Main10.jpg" alt="Atas Cam Offline" />
+                    <img id="atasCamImg" src="camera-placeholder.png" alt="Foto kamera atas belum tersedia" />
                 </div>
                 <div class="camera">
                     <div class="panel-title">Bawah Cam Feed</div>
-                    <img id="bawahCamImg" src="murky-water.jpg" alt="Bawah Cam Offline" />
+                    <img id="bawahCamImg" src="camera-placeholder.png" alt="Foto kamera bawah belum tersedia" />
                 </div>
                 <div class="camera">
                     <div class="panel-title">Map / Waypoints</div>
@@ -415,409 +468,6 @@
         <div>Time: <span id="timeFooter"></span></div>
     </div>
 
-    <script>
-        // ================================================================
-        //  MASTER STATE
-        // ================================================================
-        var asvState = {
-            position: { x: 0, y: 0, z: 0 },
-            orientation: { x: 0, y: 0, z: 0, w: 1 },
-            linear: { x: 0, y: 0, z: 0 },
-            angular: { x: 0, y: 0, z: 0 },
-            battery1: { voltage: 12.4, current: 2.1, pressure: 1013, capacity: 5000, used: 120, temp: 35 },
-            thrusterPort: { voltage: 12.0, current: 0.5, capacity: 5000, temp: 40 },
-            thrusterStar: { voltage: 12.0, current: 0.5, capacity: 5000, temp: 40 },
-            gps: { sog: 0, cog: 0, lat: null, lon: null, satellites: 8, hdop: 1.2, fix: false, lastCalib: "-" },
-            speed: 0,
-            depth: 0,
-            sensors: { heartbeat: true, eb: true, pmb1: true, pmb2: true, manip: true, thrusterPort: true, thrusterStar: true, ocs: true, batPort: true, batStar: true },
-            mode: "Manual",
-            arm: "Disarmed",
-            missionState: "IDLE",
-            loggerActive: false,
-            currentTrack: "A"
-        };
-
-        // ================================================================
-        //  1.  ROTAMAP 
-        // ================================================================
-        var MAP_CENTER = [-7.069219, 110.304997];
-        var map = null;
-        var boatMarker = null;
-        var boatHeading = 0;
-        var isFollowing = false;
-
-        function initMap() {
-            var container = document.getElementById('map');
-            if (!container) return;
-
-            if (typeof RotaMap === 'undefined') {
-                console.warn('RotaMap not loaded — map disabled');
-                container.innerHTML = '<div style="color:#94a3b8;text-align:center;padding:80px 0;font-size:13px;">⚠ RotaMap tidak ditemukan</div>';
-                return;
-            }
-
-            map = RotaMap.map('map', { center: MAP_CENTER, zoom: 19, maxZoom: 22, bearing: 0, minZoom: 14 });
-            RotaMap.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map);
-            RotaMap.circle(MAP_CENTER, { radius: 23, color: '#38bdf8', fillColor: '#38bdf8', fillOpacity: 0.08, weight: 2, dashArray: '5,5' }).addTo(map);
-
-            var boatIcon = RotaMap.divIcon({ html: '<div style="font-size:26px;line-height:30px;text-align:center;filter:drop-shadow(0 2px 3px rgba(0,0,0,.5))">⛵</div>', iconSize: [30, 30], iconAnchor: [15, 15] });
-            boatMarker = RotaMap.marker(MAP_CENTER, { icon: boatIcon, rotation: 0, keepUpright: false }).addTo(map);
-            boatMarker.bindPopup('<b>ASV</b><br>posisi saat ini');
-
-            var path = [[-7.069219, 110.304997], [-7.069050, 110.305160], [-7.068900, 110.305050], [-7.068980, 110.304800]];
-            RotaMap.polyline(path, { color: '#ef4444', weight: 4, dashArray: '8,8' }).addTo(map);
-
-            var ro = new ResizeObserver(function() { if (map) map.invalidateSize(); });
-            ro.observe(document.getElementById('mapContainer'));
-
-            updateMapReadout();
-            map.on('move', updateMapReadout);
-            map.on('zoom', updateMapReadout);
-            map.on('rotate', updateMapReadout);
-        }
-
-        function updateMapReadout() {
-            if (!map) return;
-            var c = map.getCenter();
-            var el = document.getElementById('mapReadout');
-            if (!el) {
-                var container = document.getElementById('mapContainer');
-                if (container) {
-                    var div = document.createElement('div');
-                    div.id = 'mapReadout';
-                    div.style.cssText = 'position:absolute;left:8px;bottom:8px;z-index:5;font-size:10px;color:#94a3b8;background:rgba(15,23,42,.7);padding:2px 10px;border-radius:10px;pointer-events:none;';
-                    container.appendChild(div);
-                    el = div;
-                }
-            }
-            if (el) el.textContent = 'lat ' + c.lat.toFixed(5) + '  lon ' + c.lng.toFixed(5) + '  zoom ' + map.getZoom().toFixed(1) + '  bearing ' + Math.round(map.getBearing()) + '°';
-        }
-
-        // ================================================================
-        //  2.  WEBSOCKET CONNECTION (Telemetri Data)
-        // ================================================================
-        var ws;
-
-        function connectWebSocket() {
-            ws = new WebSocket("ws://192.168.0.4:8765"); 
-
-            ws.onopen = function() {
-                var cf = document.getElementById("connFooter");
-                cf.innerText = "Connected";
-                cf.className = "blue";
-                console.log("WebSocket Connected");
-            };
-
-            ws.onmessage = function(event) {
-                try {
-                    const dataObj = JSON.parse(event.data);
-                    
-                    if (dataObj.lat !== undefined) asvState.gps.lat = parseFloat(dataObj.lat);
-                    if (dataObj.lon !== undefined) asvState.gps.lon = parseFloat(dataObj.lon);
-                    if (dataObj.x !== undefined) asvState.position.x = parseFloat(dataObj.x);
-                    if (dataObj.y !== undefined) asvState.position.y = parseFloat(dataObj.y);
-                    if (dataObj.sog !== undefined) {
-                        asvState.gps.sog = parseFloat(dataObj.sog);
-                        asvState.speed = parseFloat(dataObj.sog);
-                    }
-                    if (dataObj.cog !== undefined) asvState.gps.cog = parseFloat(dataObj.cog);
-                    if (dataObj.kompas !== undefined) {
-                        asvState.orientation.z = parseFloat(dataObj.kompas) * (Math.PI / 180); 
-                    }
-                    asvState.gps.fix = (asvState.gps.lat !== 0 && asvState.gps.lat !== null);
-                    
-                    // Kalau masih kirim base64 dari WS lama, ini bakal niban fotonya
-                    // Tapi di backend Python terbaru kan fitur base64 WS udah lu apus, jadi aman.
-                    if (dataObj.camAtas && document.getElementById("atasCamSelect").value === "Subscribed (WS)") {
-                        document.getElementById("atasCamImg").src = "data:image/jpeg;base64," + dataObj.camAtas;
-                    }
-                    if (dataObj.camBawah && document.getElementById("bawahCamSelect").value === "Subscribed (WS)") {
-                        document.getElementById("bawahCamImg").src = "data:image/jpeg;base64," + dataObj.camBawah;
-                    }
-
-                    updUI(asvState);
-
-                } catch (error) {
-                    console.error("Terjadi kesalahan saat parsing JSON WS:", error);
-                }
-            };
-
-            ws.onclose = function() {
-                var cf = document.getElementById("connFooter");
-                cf.innerText = "Disconnected";
-                cf.className = "red";
-                console.warn("WebSocket Disconnected. Mencoba menyambung kembali...");
-                setTimeout(connectWebSocket, 3000); 
-            };
-            
-            ws.onerror = function(err) {
-                console.error("WebSocket Error: ", err);
-            };
-        }
-
-        function sendCmd(cmd) {
-            if (ws && ws.readyState === WebSocket.OPEN) {
-                const payload = Object.assign({ id: Date.now().toString(36) }, cmd);
-                ws.send(JSON.stringify(payload));
-                console.log("Command Terkirim via WS:", payload);
-            } else {
-                console.warn("WS tidak terhubung, gagal mengirim: ", cmd);
-            }
-        }
-
-        // ================================================================
-        //  3.  HTTP POLLING (LANGSUNG TEMBAK KE DIV ORIGINAL)
-        // ================================================================
-        var fotoAtasSudahAda = false;
-        var fotoBawahSudahAda = false;
-
-        function pantauFotoHTTP() {
-            setInterval(function() {
-                fetch("http://192.168.0.4:8766/status")
-                .then(res => res.json())
-                .then(data => {
-                    var pf = document.getElementById("photoFooter");
-                    
-                    // === JIKA GAMBAR ATAS ADA ===
-                    if (data.atas && !fotoAtasSudahAda) {
-                        // Nembak langsung ke ID atasCamImg bawaan
-                        document.getElementById("atasCamImg").src = "http://192.168.0.4:8766/atas.jpg";
-                        fotoAtasSudahAda = true;
-                        
-                        if(pf) { pf.innerText = "Target Atas Tertangkap!"; pf.className = "blue"; }
-                    } else if (!data.atas) {
-                        fotoAtasSudahAda = false; 
-                    }
-
-                    // === JIKA GAMBAR BAWAH ADA ===
-                    if (data.bawah && !fotoBawahSudahAda) {
-                        // Nembak langsung ke ID bawahCamImg bawaan
-                        document.getElementById("bawahCamImg").src = "http://192.168.0.4:8766/bawah.jpg";
-                        fotoBawahSudahAda = true;
-                        
-                        if(pf) { pf.innerText = "Target Bawah Tertangkap!"; pf.className = "blue"; }
-                    } else if (!data.bawah) {
-                        fotoBawahSudahAda = false;
-                    }
-
-                    if (!data.atas && !data.bawah && pf) {
-                        pf.innerText = "Menunggu Target...";
-                        pf.className = "red";
-                    }
-                })
-                .catch(err => {
-                    // Abaikan kalau HTTP mati
-                });
-            }, 1000); 
-        }
-
-        // ================================================================
-        //  4.  UI UPDATE
-        // ================================================================
-        function updUI(d) {
-            var $ = function(id) { return document.getElementById(id); };
-            var setVal = function(id, v) { var el = $(id); if (el) el.value = v; };
-            var setText = function(id, v) { var el = $(id); if (el) el.innerText = v; };
-            var setHTML = function(id, v) { var el = $(id); if (el) el.innerHTML = v; };
-
-            setVal("xCoord", d.position.x.toFixed(3));
-            setVal("yCoord", d.position.y.toFixed(3));
-
-            var boxData = [
-                ["posBox", "Position<br>X: " + d.position.x.toFixed(3) + "<br>Y: " + d.position.y.toFixed(3) + "<br>Z: " + d.position.z.toFixed(3)],
-                ["oriBox", "Orientation<br>X: " + d.orientation.x.toFixed(3) + "<br>Y: " + d.orientation.y.toFixed(3) + "<br>Z: " + d.orientation.z.toFixed(3) + "<br>W: " + d.orientation.w.toFixed(3)],
-                ["linBox", "Linear<br>X: " + d.linear.x.toFixed(3) + "<br>Y: " + d.linear.y.toFixed(3) + "<br>Z: " + d.linear.z.toFixed(3)],
-                ["angBox", "Angular<br>X: " + d.angular.x.toFixed(3) + "<br>Y: " + d.angular.y.toFixed(3) + "<br>Z: " + d.angular.z.toFixed(3)],
-                ["bat1Box", "Batt 1<br>Voltage: " + d.battery1.voltage.toFixed(1) + "<br>Current: " + d.battery1.current.toFixed(1) + "<br>Pressure: " + d.battery1.pressure + "<br>Capacity: " + d.battery1.capacity + "mAh<br>Used: " + d.battery1.used.toFixed(0) + "mAh<br>Temperature: " + d.battery1.temp],
-                ["sogCogBox", "<b>SOG & COG</b><br>SOG: " + (function() { var sog = (d.gps && d.gps.sog !== undefined) ? d.gps.sog : d.speed; return (typeof sog === 'number' ? sog.toFixed(2) : '0.00'); })() + " Knots<br>COG: " + (function() { var cog = (d.gps && d.gps.cog !== undefined) ? d.gps.cog : (d.orientation.z * 180 / Math.PI); return (typeof cog === 'number' ? cog.toFixed(1) : '0.0'); })() + "°<br>Kompas (Heading): " + (d.orientation.z * 180 / Math.PI).toFixed(1) + "°"],
-                ["thrusterPortBox", "Thrusters (Port)<br>Voltage: " + d.thrusterPort.voltage.toFixed(1) + "<br>Current: " + d.thrusterPort.current.toFixed(1) + "<br>Capacity: " + d.thrusterPort.capacity + "mAh<br>Temperature: " + d.thrusterPort.temp],
-                ["thrusterStarBox", "Thrusters (Star)<br>Voltage: " + d.thrusterStar.voltage.toFixed(1) + "<br>Current: " + d.thrusterStar.current.toFixed(1) + "<br>Capacity: " + d.thrusterStar.capacity + "mAh<br>Temperature: " + d.thrusterStar.temp]
-            ];
-            boxData.forEach(function(item) { setHTML(item[0], item[1]); });
-
-            setVal("satellitesCount", d.gps.satellites);
-            setVal("hdopValue", d.gps.hdop.toFixed(1));
-            var gpsEl = $("gpsStatus");
-            if (d.gps.fix) {
-                gpsEl.className = "gps-status good-status";
-                gpsEl.innerText = "Calibrated";
-                setText("gpsFixFooter", "Fix");
-                $("gpsFixFooter").className = "blue";
-            } else {
-                gpsEl.className = "gps-status bad-status";
-                gpsEl.innerText = "Not Calibrated";
-                setText("gpsFixFooter", "No Fix");
-                $("gpsFixFooter").className = "red";
-            }
-            setText("lastCalibText", "Last Calibration: " + d.gps.lastCalib);
-            setText("depthFooter", d.depth.toFixed(1));
-            setText("speedFooter", d.speed.toFixed(2));
-
-            var sensorMap = { heartbeat: d.sensors.heartbeat, eb: d.sensors.eb, pmb1: d.sensors.pmb1, pmb2: d.sensors.pmb2, manip: d.sensors.manip, thrusterPort: d.sensors.thrusterPort, thrusterStar: d.sensors.thrusterStar, ocs: d.sensors.ocs, batPort: d.sensors.batPort, batStar: d.sensors.batStar };
-            Object.keys(sensorMap).forEach(function(id) {
-                var el = document.getElementById("sensor_" + id);
-                if (el) {
-                    var ok = sensorMap[id];
-                    el.className = "status-box " + (ok ? "ok" : "bad");
-                    el.innerText = ok ? "OK" : "Not OK";
-                }
-            });
-
-            document.querySelectorAll("#modeGroup button, #armGroup button").forEach(function(b) { b.classList.remove("state-active"); });
-            var modeMap = { Manual: "modeManualBtn", Auto: "modeAutoBtn", "Return Home": "modeReturnBtn" };
-            if (modeMap[d.mode]) $(modeMap[d.mode]).classList.add("state-active");
-            var armMap = { Armed: "armBtn", Disarmed: "disarmBtn", EStop: "eStopBtn" };
-            if (armMap[d.arm]) $(armMap[d.arm]).classList.add("state-active");
-
-            setText("missionStatusText", d.missionState);
-            setText("asvStatusFooter", d.missionState);
-            if (d.loggerActive) $("startLoggerBtn").classList.add("state-active");
-            else $("stopLoggerBtn").classList.remove("state-active");
-
-            var track = d.currentTrack || "A";
-            setText("currentTrackLabel", track);
-            document.querySelectorAll(".track-btn").forEach(function(b) {
-                b.classList.toggle("active-track", b.getAttribute("data-track") === track);
-            });
-
-            if (boatMarker && map) {
-                var lat = d.gps.lat;
-                var lon = d.gps.lon;
-                if (lat == null || lon == null) {
-                    var c = boatMarker.getLatLng();
-                    lat = c.lat;
-                    lon = c.lng;
-                }
-                boatMarker.setLatLng([lat, lon]);
-                if (d.orientation && typeof d.orientation.z === 'number') {
-                    boatHeading = d.orientation.z * (180 / Math.PI);
-                    boatMarker.setRotation(boatHeading);
-                }
-                if (isFollowing && map) map.setBearing(boatHeading);
-                if (lat != null && lon != null && d.gps.fix) map.panTo([lat, lon]);
-                updateMapReadout();
-            }
-        }
-
-        // ================================================================
-        //  5.  INIT UI & CAMERA LOGIC
-        // ================================================================
-        function initUI() {
-            var container = document.getElementById("sensorList");
-            var sensors = ["heartbeat", "eb", "pmb1", "pmb2", "manip", "thrusterPort", "thrusterStar", "ocs", "batPort", "batStar"];
-            sensors.forEach(function(id) {
-                var div = document.createElement("div");
-                div.className = "status-item";
-                div.innerHTML = "<span>" + id.toUpperCase() + "</span><div id=\"sensor_" + id + "\" class=\"status-box ok\">OK</div>";
-                container.appendChild(div);
-            });
-
-            ["atasCamSelect", "bawahCamSelect"].forEach(function(selId) {
-                var sel = document.getElementById(selId);
-                ["Subscribed (WS)", "Live Stream (HTTP)", "Unsubscribed"].forEach(function(opt) {
-                    sel.appendChild(new Option(opt, opt));
-                });
-                sel.value = "Subscribed (WS)"; 
-                
-                sel.onchange = function() {
-                    var imgId = (selId === "atasCamSelect") ? "atasCamImg" : "bawahCamImg";
-                    var imgEl = document.getElementById(imgId);
-                    
-                    if (this.value === "Unsubscribed") {
-                        imgEl.src = (selId === "atasCamSelect") ? "Main10.jpg" : "murky-water.jpg"; 
-                    } else if (this.value === "Live Stream (HTTP)") {
-                        var streamPort = (selId === "atasCamSelect") ? "8081" : "8082"; 
-                        var streamUrl = "http://192.168.0.4:" + streamPort + "/stream";
-                        imgEl.src = streamUrl;
-                    }
-                };
-            });
-
-            var methSel = document.getElementById("calibMethod");
-            ["Static (Recommended)", "Kinematic"].forEach(function(m) { methSel.appendChild(new Option(m, m)); });
-            methSel.value = "Static (Recommended)";
-
-            document.getElementById("dataBoxesGrid1").innerHTML =
-                '<div class="black-box" id="posBox"><b>Position</b><br>X: 0.000<br>Y: 0.000<br>Z: 0.000</div>' +
-                '<div class="black-box" id="oriBox"><b>Orientation</b><br>X: 0.000<br>Y: 0.000<br>Z: 0.000<br>W: 1.000</div>' +
-                '<div class="black-box" id="linBox"><b>Linear</b><br>X: 0.000<br>Y: 0.000<br>Z: 0.000</div>' +
-                '<div class="black-box" id="angBox"><b>Angular</b><br>X: 0.000<br>Y: 0.000<br>Z: 0.000</div>';
-
-            document.getElementById("dataBoxesGrid2").innerHTML =
-                '<div class="black-box" id="bat1Box"><b>Batt 1</b><br>Voltage: 0.0<br>Current: 0.0<br>Pressure: 0<br>Capacity: 0mAh<br>Used: 0mAh<br>Temperature: 0</div>' +
-                '<div class="black-box" id="sogCogBox"><b>SOG & COG</b><br>SOG: 0.00 m/s<br>COG: 0.0°</div>' +
-                '<div class="black-box" id="thrusterPortBox"><b>Thrusters (Port)</b><br>Voltage: 0.0<br>Current: 0.0<br>Capacity: 0mAh<br>Temperature: 0</div>' +
-                '<div class="black-box" id="thrusterStarBox"><b>Thrusters (Star)</b><br>Voltage: 0.0<br>Current: 0.0<br>Capacity: 0mAh<br>Temperature: 0</div>';
-
-            document.getElementById("currentWp").innerText = "0 / 0";
-            updUI(asvState);
-        }
-
-        // ================================================================
-        //  6.  BIND BUTTONS
-        // ================================================================
-        function bindAll() {
-            var btnMap = {
-                "modeManualBtn": { command: "set_mode", mode: "Manual" },
-                "modeAutoBtn": { command: "set_mode", mode: "Auto" },
-                "modeReturnBtn": { command: "set_mode", mode: "Return Home" },
-                "armBtn": { command: "arm", action: "arm" },
-                "disarmBtn": { command: "arm", action: "disarm" },
-                "eStopBtn": { command: "arm", action: "estop" },
-                "missionStartBtn": { command: "mission", action: "start" },
-                "missionPauseBtn": { command: "mission", action: "pause" },
-                "missionStopBtn": { command: "mission", action: "stop" },
-                "testStartMissionBtn": { command: "mission", action: "start" },
-                "testPauseMissionBtn": { command: "mission", action: "pause" },
-                "testStopMissionBtn": { command: "mission", action: "stop" },
-                "resetMissionBtn": { command: "reset_mission" },
-                "startLoggerBtn": { command: "logger", action: "start" },
-                "stopLoggerBtn": { command: "logger", action: "stop" },
-                "goHomeBtn": { command: "go_home" },
-                "holdPosBtn": { command: "hold_position" },
-                "setHomeBtn": { command: "set_home" },
-                "exportLogBtn": { command: "export_log" }
-            };
-            Object.keys(btnMap).forEach(function(id) {
-                document.getElementById(id).onclick = function() { sendCmd(btnMap[id]); };
-            });
-
-            document.getElementById("startCalibBtn").onclick = function() {
-                sendCmd({ command: "calibration", action: "start", duration: +document.getElementById("calibDuration").value, method: document.getElementById("calibMethod").value });
-            };
-
-            document.querySelectorAll(".track-btn").forEach(function(b) {
-                b.onclick = function() {
-                    var t = b.getAttribute("data-track");
-                    if (t === document.getElementById("currentTrackLabel").innerText) { alert("Sudah di lintasan tersebut."); return; }
-                    if (confirm("Pindah ke Lintasan " + t + "?")) { sendCmd({ command: "set_track", track: t }); }
-                };
-            });
-        }
-
-        // ================================================================
-        //  7.  BOOT
-        // ================================================================
-        window.onload = function() {
-            initUI();
-            bindAll();
-            
-            setTimeout(initMap, 100);
-            
-            connectWebSocket(); 
-            pantauFotoHTTP();   
-            
-            setInterval(function() {
-                document.getElementById("timeFooter").innerText = new Date().toLocaleString();
-            }, 1000);
-
-            window.toggleFollow = function() {
-                isFollowing = !isFollowing;
-                console.log("Follow mode:", isFollowing ? "ON" : "OFF");
-                if (isFollowing && boatMarker && map) map.setBearing(boatHeading);
-            };
-        };
-    </script>
+    <script src="dashboard.js?v=dev"></script>
 </body>
 </html>
