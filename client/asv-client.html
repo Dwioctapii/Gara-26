@@ -352,6 +352,39 @@
             font-weight: 800;
             color: #123b67;
         }
+        .wp-badge {
+            width: 22px;
+            height: 22px;
+            border-radius: 50%;
+            background: #2563eb;
+            color: #ffffff;
+            font-size: 11px;
+            font-weight: bold;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border: 2px solid #ffffff;
+            box-shadow: 0 2px 6px rgba(0,0,0,0.5);
+            user-select: none;
+            cursor: pointer;
+            transition: transform 0.15s ease-in-out;
+        }
+        .wp-badge:hover {
+            transform: scale(1.25);
+        }
+        .wp-badge-active {
+            background: #f59e0b !important;
+            border-color: #fef08a !important;
+            box-shadow: 0 0 8px #f59e0b, 0 2px 6px rgba(0,0,0,0.6) !important;
+            animation: wpPulse 1.4s infinite alternate;
+        }
+        .wp-badge-home {
+            background: #10b981 !important;
+        }
+        @keyframes wpPulse {
+            from { transform: scale(1); }
+            to { transform: scale(1.2); }
+        }
         @media (max-width: 760px) {
             .gps-compass-row { grid-template-columns: 1fr; }
         }
@@ -449,6 +482,13 @@
                 </div>
                 <div class="camera">
                     <div class="panel-title">Map / Waypoints</div>
+                    <div class="panel-title" style="display:flex;justify-content:space-between;align-items:center;">
+                        <span>Map / Waypoints & Trajectory</span>
+                        <div style="display:flex;gap:4px;">
+                            <button id="recenterMapBtn" style="height:22px;padding:1px 6px;font-size:11px;background:#0b5e8a;color:#fff;border:none;border-radius:3px;cursor:pointer;">Center ASV</button>
+                            <button id="clearTrailBtn" style="height:22px;padding:1px 6px;font-size:11px;background:#6b7280;color:#fff;border:none;border-radius:3px;cursor:pointer;">Reset Trail</button>
+                        </div>
+                    </div>
                     <div id="mapContainer" class="map-container">
                         <div id="map" style="width:100%;height:100%;"></div>
                         <div class="map-hint">drag ⇢ geser · scroll ⇢ zoom</div>

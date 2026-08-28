@@ -6,8 +6,6 @@ import copy
 import threading
 import time
 
-from navigation import navigation_snapshot
-
 
 def _merge(target: dict, patch: dict) -> None:
     for key, value in patch.items():
@@ -26,17 +24,17 @@ class StateStore:
             "orientation": {"x": 0.0, "y": 0.0, "z": 0.0, "w": 1.0},
             "linear": {"x": 0.0, "y": 0.0, "z": 0.0},
             "angular": {"x": 0.0, "y": 0.0, "z": 0.0},
-            "gps": {"lat": None, "lon": None, "sog": 0.0, "cog": 0.0, "satellites": 0, "hdop": 99.9, "fix": False},
-            "speed": 0.0, "mode": "DISCONNECTED", "arm": "Disarmed",
-            "battery1": {"voltage": 0.0, "current": 0.0, "percentage": 0},
-            "thrusterPort": 0.0, "thrusterStar": 0.0, "depth": 0.0,
-            "missionState": "IDLE", "loggerActive": False, "currentTrack": 1,
-            "mission": {"current": 0, "total": 0, "waypoints": [], "revision": 0,
-                        "syncing": False, "updatedAt": None},
-            "navigation": {},
+            "battery1": {"voltage": 0.0, "current": 0.0, "pressure": 0, "capacity": 0, "used": 0.0, "temp": 0},
+            "thrusterPort": {"voltage": 0.0, "current": 0.0, "capacity": 0, "temp": 0},
+            "thrusterStar": {"voltage": 0.0, "current": 0.0, "capacity": 0, "temp": 0},
+            "gps": {"lat": None, "lon": None, "sog": 0.0, "cog": 0.0, "satellites": 0, "hdop": 99.9, "fix": False, "lastCalib": "-"},
+            "speed": 0.0, "depth": 0.0, "mode": "DISCONNECTED", "arm": "Disarmed",
+            "missionState": "IDLE", "loggerActive": False, "currentTrack": "A",
+            "mission": {"current": 0, "total": 0, "waypoints": []},
+            "servo": [0, 0, 0, 0],
             "detection": {"label": "STANDBY", "foto_atas_ready": False, "foto_bawah_ready": False},
-            "sensors": {"heartbeat": False, "gps": False, "imu": False,
-                        "cameraAtas": False, "cameraBawah": False},
+            "sensors": {"heartbeat": False, "eb": False, "pmb1": False, "pmb2": False, "manip": False, "thrusterPort": False, "thrusterStar": False, "ocs": False, "batPort": False, "batStar": False},
+            "home": None, "lastCommand": None,
         }
 
     def update(self, patch: dict) -> None:
@@ -44,40 +42,34 @@ class StateStore:
             _merge(self.data, patch)
             self.data["timestamp"] = time.time()
 
+    def command(self, cmd: dict) -> None:
+        name, action, patch = cmd.get("command"), cmd.get("action"), {"lastCommand": cmd}
+        if name == "set_mode" and cmd.get("mode") in {"Manual", "Auto", "Return Home"}: patch["mode"] = cmd["mode"]
+        elif name == "arm" and action in {"arm", "disarm", "estop"}: patch["arm"] = {"arm":"Armed","disarm":"Disarmed","estop":"EStop"}[action]
+        elif name == "mission" and action in {"start", "pause", "stop"}: patch["missionState"] = {"start":"RUNNING","pause":"PAUSED","stop":"STOPPED"}[action]
+        elif name == "reset_mission": patch.update(missionState="IDLE", mission={"current": 0, "total": self.data["mission"].get("total", 0), "waypoints": self.data["mission"].get("waypoints", [])})
+        elif name == "set_track" and cmd.get("track") in ("A", "B", "C", "D"): patch["currentTrack"] = cmd["track"]
+        elif name == "go_home": patch.update(mode="Return Home", missionState="RETURNING HOME")
+        elif name == "hold_position": patch["missionState"] = "HOLDING"
+        elif name == "set_home": patch["home"] = {k:self.data["gps"][k] for k in ("lat","lon")}
+        elif name == "calibration": patch["gps"] = {"lastCalib": time.strftime("%F %T")}
+        elif name == "logger" and action in {"start", "stop"}:
+            patch["loggerActive"] = action == "start"
+        self.update(patch)
+
     def snapshot(self) -> dict:
         with self.lock:
-            result = copy.deepcopy(self.data)
-            gps, position = result["gps"], result["position"]
-            # Alias lama tetap tersedia agar dashboard ZIP tidak perlu diubah.
-            result.update({"lat": gps["lat"], "lon": gps["lon"],
-                           "x": position["x"], "y": position["y"],
-                           "sog": gps["sog"], "cog": gps["cog"],
-                           "kompas": gps["cog"]})
-            return result
+            out = copy.deepcopy(self.data)
+        gps, pos = out["gps"], out["position"]
+        out.update(lat=gps["lat"], lon=gps["lon"], x=pos["x"], y=pos["y"], sog=gps["sog"], cog=gps["cog"], kompas=gps["cog"])
+        return out
 
     def replace_mission(self, waypoints: list[dict]) -> None:
         """Tukar mission sekaligus; client tidak akan menerima daftar setengah jadi."""
         with self.lock:
             self.data["mission"]["waypoints"] = waypoints
             self.data["mission"]["total"] = len(waypoints)
-            self.data["mission"]["revision"] += 1
-            self.data["mission"]["syncing"] = False
-            self.data["mission"]["updatedAt"] = time.time()
-            self._refresh_navigation()
             self.data["timestamp"] = time.time()
-
-    def set_mission_syncing(self, syncing: bool) -> None:
-        with self.lock:
-            self.data["mission"]["syncing"] = syncing
-
-    def refresh_navigation(self) -> None:
-        with self.lock:
-            self._refresh_navigation()
-
-    def _refresh_navigation(self) -> None:
-        self.data["navigation"] = navigation_snapshot(
-            self.data["gps"], self.data["mission"]
-        )
 
 
 store = StateStore()

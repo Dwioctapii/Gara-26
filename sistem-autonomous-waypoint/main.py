@@ -11,17 +11,18 @@ from vision_worker import VisionWorker
 
 def main() -> None:
     PHOTO_DIR.mkdir(parents=True, exist_ok=True)
-    mavlink = MavlinkWorker(MAVLINK_ENDPOINT, MAVLINK_BAUD, MISSION_REFRESH_SECONDS,
-                            store, MISSION_ITEM_TIMEOUT, MISSION_MAX_RETRIES,
-                            WAYPOINT_REACHED_RADIUS)
+    mavlink = MavlinkWorker(MAVLINK_ENDPOINT, MAVLINK_BAUD, MISSION_REFRESH_SECONDS, store)
     mavlink.start()
     start_http(HTTP_HOST, HTTP_PORT, PHOTO_DIR, store)
-    start_websocket(WS_HOST, WS_PORT, WS_HZ, store)
+    start_websocket(WS_HOST, WS_PORT, WS_HZ, store, mavlink.handle_command)
     VisionWorker(CAM_ATAS_INDEX, CAM_BAWAH_INDEX, MODEL_PATH, PHOTO_DIR, store).start()
     try:
-        while True:
-            time.sleep(1)
+        from gui import run_dashboard
+        print("[GUI] Menjalankan Dashboard Matplotlib...")
+        run_dashboard(store, PHOTO_DIR)
     except KeyboardInterrupt:
+        pass
+    finally:
         mavlink.stop()
         print("\n[ASV] stopped")
 

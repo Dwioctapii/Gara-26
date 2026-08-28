@@ -23,13 +23,14 @@ const state = {
     thrusterPort: { voltage: 0, current: 0, capacity: 0, temp: 0 },
     thrusterStar: { voltage: 0, current: 0, capacity: 0, temp: 0 },
     gps: { sog: 0, cog: 0, lat: null, lon: null, satellites: 0, hdop: 99.9, fix: false, lastCalib: "-" },
+    heading: 0,
     speed: 0,
     depth: 0,
     sensors: {},
     arm: "Disarmed",
     missionState: "IDLE",
     currentTrack: "A",
-    mission: { current: 0, total: 0 }
+    mission: { current: 0, total: 0, waypoints: [], revision: 0 }
 };
 
 const SENSOR_IDS = [
@@ -39,9 +40,21 @@ const SENSOR_IDS = [
 
 let socket = null;
 let reconnectTimer = null;
+
+// Map & Visualization Layers
 let map = null;
 let boatMarker = null;
 let boatHeading = 0;
+let trajectoryLine = null;
+let missionRouteLine = null;
+let waypointMarkers = [];
+let activeWpCircle = null;
+let hasCenteredOnBoat = false;
+let lastTrailCoord = null;
+let lastRenderedWpRevision = -1;
+let lastRenderedCurrentWp = -1;
+
+// Compass
 let compassReady = false;
 let compassLastNormalized = 0;
 let compassContinuousAngle = 0;
@@ -70,7 +83,16 @@ function applyTelemetry(data) {
     if (data.lon !== undefined) state.gps.lon = number(data.lon, null);
     if (data.sog !== undefined) state.gps.sog = state.speed = number(data.sog);
     if (data.cog !== undefined) state.gps.cog = number(data.cog);
-    if (data.kompas !== undefined) state.orientation.z = number(data.kompas) * Math.PI / 180;
+
+    // Patch Heading: Ambil heading eksplisit dari backend, atau hitung dari orientasi yaw (rad -> deg)
+    if (data.heading !== undefined && data.heading !== null) {
+        state.heading = number(data.heading);
+    } else if (data.kompas !== undefined && data.kompas !== null) {
+        state.heading = number(data.kompas);
+    } else if (state.orientation && state.orientation.z !== undefined) {
+        state.heading = ((number(state.orientation.z) * 180 / Math.PI) % 360 + 360) % 360;
+    }
+
     render();
 }
 
@@ -151,13 +173,17 @@ function render() {
 
     SENSOR_IDS.forEach(id => {
         const element = byId(`sensor_${id}`);
-        const ok = Boolean(state.sensors[id]);
-        element.textContent = ok ? "OK" : "Not OK";
-        element.className = `status-box ${ok ? "ok" : "bad"}`;
+        if (element) {
+            const ok = Boolean(state.sensors[id]);
+            element.textContent = ok ? "OK" : "Not OK";
+            element.className = `status-box ${ok ? "ok" : "bad"}`;
+        }
     });
-    updateCompass(number(state.orientation.z) * 180 / Math.PI);
+
+    updateCompass(state.heading);
     renderDataBoxes();
     updateBoatMarker();
+    updateWaypoints();
 }
 
 function updateCompass(rawDegrees) {
@@ -174,8 +200,10 @@ function updateCompass(rawDegrees) {
     }
     compassLastNormalized = normalized;
 
-    byId("compassRose").style.transform = `rotate(${compassContinuousAngle}deg)`;
-    byId("compassValue").textContent = `${normalized.toFixed(1)}°`;
+    const rose = byId("compassRose");
+    if (rose) rose.style.transform = `rotate(${compassContinuousAngle}deg)`;
+    const val = byId("compassValue");
+    if (val) val.textContent = `${normalized.toFixed(1)}°`;
 }
 
 function renderDataBoxes() {
@@ -184,9 +212,13 @@ function renderDataBoxes() {
     byId("oriBox").innerHTML = `<b>Orientation</b><br>X: ${fixed(o.x,3)}<br>Y: ${fixed(o.y,3)}<br>Z: ${fixed(o.z,3)}<br>W: ${fixed(o.w,3)}`;
     byId("linBox").innerHTML = `<b>Linear</b><br>X: ${fixed(l.x,3)}<br>Y: ${fixed(l.y,3)}<br>Z: ${fixed(l.z,3)}`;
     byId("angBox").innerHTML = `<b>Angular</b><br>X: ${fixed(a.x,3)}<br>Y: ${fixed(a.y,3)}<br>Z: ${fixed(a.z,3)}`;
+
     const b = state.battery1, port = state.thrusterPort, star = state.thrusterStar;
-    byId("bat1Box").innerHTML = `<b>Battery</b><br>Voltage: ${fixed(b.voltage,1)}<br>Current: ${fixed(b.current,1)}<br>Capacity: ${number(b.capacity)}mAh<br>Used: ${fixed(b.used,0)}mAh<br>Temperature: ${number(b.temp)}`;
-    byId("sogCogBox").innerHTML = `<b>SOG & COG</b><br>SOG: ${fixed(state.gps.sog,2)} m/s<br>COG: ${fixed(state.gps.cog,1)}°<br>Heading: ${fixed(state.orientation.z*180/Math.PI,1)}°`;
+    byId("bat1Box").innerHTML = `<b>Battery</b><br>Voltage: ${fixed(b.voltage,1)} V<br>Current: ${fixed(b.current,1)} A<br>Capacity: ${number(b.capacity)} mAh<br>Used: ${fixed(b.used,0)} mAh<br>Temp: ${number(b.temp)}°C`;
+
+    const sogKts = state.gps.sog * 1.94384;
+    byId("sogCogBox").innerHTML = `<b>SOG & COG & Heading</b><br>SOG: ${fixed(state.gps.sog,2)} m/s (${fixed(sogKts,2)} kts)<br>COG: ${fixed(state.gps.cog,1)}°<br>Heading: ${fixed(state.heading,1)}°`;
+
     byId("thrusterPortBox").innerHTML = `<b>Thrusters (Port)</b><br>Voltage: ${fixed(port.voltage,1)}<br>Current: ${fixed(port.current,1)}<br>Capacity: ${number(port.capacity)}mAh<br>Temperature: ${number(port.temp)}`;
     byId("thrusterStarBox").innerHTML = `<b>Thrusters (Star)</b><br>Voltage: ${fixed(star.voltage,1)}<br>Current: ${fixed(star.current,1)}<br>Capacity: ${number(star.capacity)}mAh<br>Temperature: ${number(star.temp)}`;
 }
@@ -195,6 +227,7 @@ function initComponents() {
     byId("sensorList").innerHTML = SENSOR_IDS.map(id => `<div class="status-item"><span>${id.toUpperCase()}</span><div id="sensor_${id}" class="status-box bad">Not OK</div></div>`).join("");
     byId("dataBoxesGrid1").innerHTML = ["posBox","oriBox","linBox","angBox"].map(id => `<div class="black-box" id="${id}"></div>`).join("");
     byId("dataBoxesGrid2").innerHTML = ["bat1Box","sogCogBox","thrusterPortBox","thrusterStarBox"].map(id => `<div class="black-box" id="${id}"></div>`).join("");
+
     const commands = {
         armBtn: { command: "arm", action: "arm" },
         disarmBtn: { command: "arm", action: "disarm" },
@@ -203,13 +236,38 @@ function initComponents() {
         missionPauseBtn: { command: "mission", action: "pause" },
         missionStopBtn: { command: "mission", action: "stop" }
     };
-    Object.entries(commands).forEach(([id, command]) => byId(id).onclick = () => sendCommand(command));
+    Object.entries(commands).forEach(([id, command]) => {
+        const el = byId(id);
+        if (el) el.onclick = () => sendCommand(command);
+    });
+
     document.querySelectorAll(".track-btn").forEach(button => button.onclick = () => {
         const track = button.dataset.track;
         if (TRACKS.includes(track) && track !== state.currentTrack && confirm(`Pindah ke Lintasan ${track}?`)) {
             sendCommand({ command: "set_track", track });
         }
     });
+
+    // const recenterBtn = byId("recenterMapBtn");
+    // if (recenterBtn) {
+        recenterBtn.onclick = () => {
+            if (state.gps.lat != null && state.gps.lon != null) {
+                map.panTo([state.gps.lat, state.gps.lon]);
+            } else {
+                map.panTo(MAP_CENTER);
+            }
+        };
+    // }
+
+    const clearTrailBtn = byId("clearTrailBtn");
+    if (clearTrailBtn) {
+        clearTrailBtn.onclick = () => {
+            if (trajectoryLine) {
+                trajectoryLine.setLatLngs([]);
+                lastTrailCoord = null;
+            }
+        };
+    }
 }
 
 function initMap() {
@@ -219,16 +277,142 @@ function initMap() {
     }
     map = RotaMap.map("map", { center: MAP_CENTER, zoom: 19, maxZoom: 22, minZoom: 14 });
     RotaMap.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png").addTo(map);
-    const icon = RotaMap.divIcon({ html: '<div style="font-size:26px;line-height:30px;text-align:center">⛵</div>', iconSize: [30,30], iconAnchor: [15,15] });
+
+    // Polyline untuk rute waypoint (Kuning putus-putus)
+    missionRouteLine = RotaMap.polyline([], { color: '#f59e0b', weight: 3, dashArray: '6,6', opacity: 0.85 }).addTo(map);
+
+    // Polyline untuk jejak trajectory aktual kapal (Cyan terang)
+    trajectoryLine = RotaMap.polyline([], { color: '#06b6d4', weight: 3, opacity: 0.9 }).addTo(map);
+
+    // Icon kapal ASV
+    const icon = RotaMap.divIcon({
+        html: '<div style="font-size:26px;line-height:30px;text-align:center;filter:drop-shadow(0 2px 5px rgba(0,0,0,0.6));">⛵</div>',
+        iconSize: [30, 30],
+        iconAnchor: [15, 15]
+    });
     boatMarker = RotaMap.marker(MAP_CENTER, { icon, rotation: 0 }).addTo(map);
     new ResizeObserver(() => map.invalidateSize()).observe(byId("mapContainer"));
 }
 
 function updateBoatMarker() {
-    if (!map || !boatMarker || !state.gps.fix || state.gps.lat == null || state.gps.lon == null) return;
-    boatMarker.setLatLng([state.gps.lat, state.gps.lon]);
-    boatHeading = number(state.orientation.z) * 180 / Math.PI;
+    if (!map || !boatMarker) return;
+
+    const hasFix = Boolean(state.gps.fix) && state.gps.lat != null && state.gps.lon != null;
+    if (!hasFix) return;
+
+    const lat = state.gps.lat;
+    const lon = state.gps.lon;
+
+    boatMarker.setLatLng([lat, lon]);
+    boatHeading = state.heading;
     boatMarker.setRotation(boatHeading);
+
+    // Auto center ke posisi kapal saat pertama kali fix
+    if (!hasCenteredOnBoat) {
+        map.panTo([lat, lon]);
+        hasCenteredOnBoat = true;
+    }
+
+    // Rekam lintasan jejak kapal (trajectory)
+    if (trajectoryLine) {
+        if (!lastTrailCoord) {
+            lastTrailCoord = [lat, lon];
+            trajectoryLine.setLatLngs([[lat, lon]]);
+        } else {
+            // Hitung jarak minimum ~0.3m sebelum append titik baru
+            const dLat = (lat - lastTrailCoord[0]) * 111319.9;
+            const dLon = (lon - lastTrailCoord[1]) * 111319.9 * Math.cos(lat * Math.PI / 180);
+            const dist = Math.hypot(dLat, dLon);
+            if (dist >= 0.3) {
+                trajectoryLine.addLatLng([lat, lon]);
+                lastTrailCoord = [lat, lon];
+            }
+        }
+    }
+}
+
+function updateWaypoints() {
+    if (!map) return;
+
+    const wpList = (state.mission && Array.isArray(state.mission.waypoints)) ? state.mission.waypoints : [];
+    const currentSeq = number(state.mission.current, 0);
+    const revision = number(state.mission.revision, 0);
+
+    const shouldRecreate = (revision !== lastRenderedWpRevision) || (wpList.length !== waypointMarkers.length);
+    const activeChanged = (currentSeq !== lastRenderedCurrentWp);
+
+    if (!shouldRecreate && !activeChanged) return;
+
+    if (shouldRecreate) {
+        // Hapus marker WP yang lama
+        waypointMarkers.forEach(item => {
+            if (item.marker && typeof item.marker.remove === "function") item.marker.remove();
+        });
+        waypointMarkers = [];
+
+        const routePts = [];
+        wpList.forEach((wp, idx) => {
+            if (wp.lat == null || wp.lon == null) return;
+            const pt = [wp.lat, wp.lon];
+            routePts.push(pt);
+
+            const isHome = (idx === 0 || wp.seq === 0);
+            const isActive = (wp.seq === currentSeq);
+            const badgeClass = `wp-badge ${isActive ? 'wp-badge-active' : ''} ${isHome ? 'wp-badge-home' : ''}`;
+            const label = isHome ? 'H' : (wp.seq !== undefined ? wp.seq : idx);
+
+            const icon = RotaMap.divIcon({
+                html: `<div class="${badgeClass}" title="Waypoint #${wp.seq || idx}">${label}</div>`,
+                iconSize: [22, 22],
+                iconAnchor: [11, 11]
+            });
+
+            const marker = RotaMap.marker(pt, { icon, keepUpright: true }).addTo(map);
+            marker.bindPopup(`<b>Waypoint #${wp.seq !== undefined ? wp.seq : idx}</b><br>Lat: ${fixed(wp.lat, 6)}<br>Lon: ${fixed(wp.lon, 6)}<br>Radius: ${fixed(wp.acceptanceRadius || 1.5, 1)} m`);
+            waypointMarkers.push({
+                marker,
+                seq: wp.seq !== undefined ? wp.seq : idx,
+                lat: wp.lat,
+                lon: wp.lon,
+                radius: wp.acceptanceRadius || 1.5
+            });
+        });
+
+        if (missionRouteLine) {
+            missionRouteLine.setLatLngs(routePts);
+        }
+        lastRenderedWpRevision = revision;
+    } else if (activeChanged) {
+        // Cukup perbarui styling active class pada badge
+        waypointMarkers.forEach(item => {
+            const isActive = (item.seq === currentSeq);
+            const isHome = (item.seq === 0);
+            const el = item.marker._inner && item.marker._inner.firstElementChild;
+            if (el) {
+                el.className = `wp-badge ${isActive ? 'wp-badge-active' : ''} ${isHome ? 'wp-badge-home' : ''}`;
+            }
+        });
+    }
+
+    // Update lingkaran Acceptance Radius untuk target waypoint aktif
+    const activeWp = waypointMarkers.find(w => w.seq === currentSeq);
+    if (activeWp) {
+        if (!activeWpCircle) {
+            activeWpCircle = RotaMap.circle([activeWp.lat, activeWp.lon], {
+                radius: activeWp.radius,
+                color: '#f59e0b',
+                fillColor: '#fef08a',
+                fillOpacity: 0.25,
+                weight: 2,
+                dashArray: '4,4'
+            }).addTo(map);
+        } else {
+            activeWpCircle.setLatLng([activeWp.lat, activeWp.lon]);
+            activeWpCircle.setRadius(activeWp.radius);
+        }
+    }
+
+    lastRenderedCurrentWp = currentSeq;
 }
 
 window.addEventListener("load", () => {
@@ -238,5 +422,5 @@ window.addEventListener("load", () => {
     connectWebSocket();
     pollPhotos();
     setInterval(pollPhotos, PHOTO_POLL_MS);
-    setInterval(() => byId("timeFooter").textContent = new Date().toLocaleString(), 1000);
+    setInterval(() => byId("timeFooter").textContent = new Date().toLocaleString(), 500);
 });

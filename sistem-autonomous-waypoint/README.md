@@ -41,15 +41,13 @@ dashboard lama, serta menambahkan seluruh koordinat pada `mission.waypoints`:
 }
 ```
 
-Mission diperiksa ulang setiap lima detik (dapat diatur). Item yang hilang akan
-diminta ulang dan daftar aktif hanya diganti setelah seluruh sequence lengkap,
-sehingga paket MAVLink yang terlambat atau tidak berurutan tidak merusak rute.
-Field `navigation` menyediakan target aktif, jarak, bearing, cross-track error,
-radius penerimaan, dan progres kaki lintasan dari posisi kapal saat ini.
+Mission ditarik ulang setiap satu detik. Perubahan yang diunggah dari Mission
+Planner akan menggantikan `mission.waypoints` hanya setelah daftar barunya
+lengkap diterima.
 
 ## Endpoint
 
-- `GET /health`, `/state`, `/waypoints`, `/status`, `/atas.jpg`, `/bawah.jpg` di port `8766`.
+- `GET /health`, `/state`, `/status`, `/atas.jpg`, `/bawah.jpg` di port `8766`.
 - WebSocket telemetry di port `8765`.
 
 `/status` mengembalikan `{"atas": true, "bawah": true}` agar photo polling

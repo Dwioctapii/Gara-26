@@ -1,165 +1,163 @@
-"""Telemetri MAVLink dan sinkronisasi mission Pixhawk yang atomik."""
+"""Pembaca MAVLink mandiri: telemetri + unduh mission Pixhawk berkala."""
+
 import math
 import threading
 import time
+
 from pymavlink import mavutil
 
 
 class MavlinkWorker:
-    def __init__(self, endpoint, baud, refresh_seconds, store, item_timeout=1.0,
-                 max_retries=4, reached_radius=1.5):
-        self.endpoint, self.baud = endpoint, baud
-        self.refresh_seconds, self.store = max(2.0, refresh_seconds), store
-        self.item_timeout, self.max_retries, self.reached_radius = item_timeout, max_retries, reached_radius
+    def __init__(self, endpoint: str, baud: int, refresh_seconds: float, store) -> None:
+        self.endpoint, self.baud, self.refresh_seconds, self.store = endpoint, baud, refresh_seconds, store
         self.master = None
         self.stop_event = threading.Event()
         self.last_request = 0.0
         self.downloading = False
-        self.pending_total, self.pending = 0, {}
-        self.requested_seq, self.request_deadline, self.retries = None, 0.0, 0
+        self.pending_total = 0
+        self.pending_waypoints: list[dict] = []
 
-    def start(self):
+    def start(self) -> None:
         threading.Thread(target=self._run, daemon=True, name="mavlink").start()
 
-    def stop(self):
+    def stop(self) -> None:
         self.stop_event.set()
         if self.master:
             self.master.close()
 
-    def _run(self):
+    def _run(self) -> None:
         while not self.stop_event.is_set():
             try:
                 print(f"[MAVLINK] Menghubungkan ke {self.endpoint}...")
                 self.master = mavutil.mavlink_connection(self.endpoint, baud=self.baud)
                 if self.master.wait_heartbeat(timeout=10) is None:
                     raise TimeoutError("heartbeat timeout")
-                self.store.update({"connected": True, "lastError": None,
-                                   "sensors": {"heartbeat": True}})
+                print(f"[MAVLINK] Terhubung ke system {self.master.target_system}")
+                self.store.update({"connected": True, "lastError": None, "sensors": {"heartbeat": True}})
                 self._request_mission()
                 while not self.stop_event.is_set():
-                    now = time.monotonic()
-                    if self.downloading and now >= self.request_deadline:
-                        self._retry_or_abort()
-                    elif not self.downloading and now - self.last_request >= self.refresh_seconds:
+                    if time.monotonic() - self.last_request >= self.refresh_seconds and not self.downloading:
                         self._request_mission()
-                    message = self.master.recv_match(blocking=True, timeout=0.15)
+                    message = self.master.recv_match(blocking=True, timeout=0.2)
                     if message:
                         self._consume(message)
             except Exception as error:
-                self.downloading = False
-                self.store.set_mission_syncing(False)
-                self.store.update({"connected": False, "lastError": f"MAVLink: {error}",
-                                   "sensors": {"heartbeat": False}})
+                self.store.update({"connected": False, "lastError": f"MAVLink: {error}", "sensors": {"heartbeat": False}})
                 if not self.stop_event.is_set():
                     time.sleep(2)
 
-    def _send(self, method, *args):
+    def _request_mission(self) -> None:
+        self.last_request, self.downloading = time.monotonic(), True
         try:
-            method(*args, mavutil.mavlink.MAV_MISSION_TYPE_MISSION)
+            self.master.mav.mission_request_list_send(self.master.target_system, self.master.target_component, mavutil.mavlink.MAV_MISSION_TYPE_MISSION)
         except TypeError:
-            method(*args)
+            self.master.mav.mission_request_list_send(self.master.target_system, self.master.target_component)
 
-    def _request_mission(self):
-        self.last_request = time.monotonic()
-        self.downloading, self.pending_total, self.pending = True, 0, {}
-        self.requested_seq, self.retries = None, 0
-        self.request_deadline = self.last_request + self.item_timeout
-        self.store.set_mission_syncing(True)
-        self._send(self.master.mav.mission_request_list_send,
-                   self.master.target_system, self.master.target_component)
+    def _request_item(self, sequence: int) -> None:
+        try:
+            self.master.mav.mission_request_int_send(self.master.target_system, self.master.target_component, sequence, mavutil.mavlink.MAV_MISSION_TYPE_MISSION)
+        except TypeError:
+            self.master.mav.mission_request_int_send(self.master.target_system, self.master.target_component, sequence)
 
-    def _request_item(self, seq):
-        self.requested_seq = seq
-        self.request_deadline = time.monotonic() + self.item_timeout
-        self._send(self.master.mav.mission_request_int_send,
-                   self.master.target_system, self.master.target_component, seq)
-
-    def _next_missing(self):
-        return next((seq for seq in range(self.pending_total) if seq not in self.pending), None)
-
-    def _retry_or_abort(self):
-        if self.retries >= self.max_retries:
-            self.downloading = False
-            self.store.set_mission_syncing(False)
-            self.store.update({"lastError": "Mission sync timeout; daftar lama dipertahankan"})
-            return
-        self.retries += 1
-        if self.pending_total:
-            seq = self.requested_seq if self.requested_seq not in self.pending else self._next_missing()
-            self._request_item(seq)
-        else:
-            self.request_deadline = time.monotonic() + self.item_timeout
-            self._send(self.master.mav.mission_request_list_send,
-                       self.master.target_system, self.master.target_component)
-
-    def _consume(self, message):
+    def _consume(self, message) -> None:
         kind = message.get_type()
         if kind == "HEARTBEAT":
-            armed = bool(message.base_mode & mavutil.mavlink.MAV_MODE_FLAG_SAFETY_ARMED)
-            self.store.update({"mode": (self.master.flightmode or "UNKNOWN").upper(),
-                               "arm": "Armed" if armed else "Disarmed"})
+            # Filter hanya HEARTBEAT dari autopilot (komponen 1) agar status arm tidak tertimpa oleh komponen lain (misal radio)
+            if message.get_srcComponent() == 1:
+                armed = bool(message.base_mode & mavutil.mavlink.MAV_MODE_FLAG_SAFETY_ARMED)
+                self.store.update({"mode": (self.master.flightmode or "UNKNOWN").upper(), "arm": "Armed" if armed else "Disarmed"})
         elif kind == "ATTITUDE":
-            self.store.update({"orientation": {"x": message.roll, "y": message.pitch, "z": message.yaw, "w": 1.0},
-                               "angular": {"x": message.rollspeed, "y": message.pitchspeed, "z": message.yawspeed},
-                               "sensors": {"imu": True}})
+            self.store.update({"orientation": {"x": message.roll, "y": message.pitch, "z": message.yaw, "w": 1.0}, "angular": {"x": message.rollspeed, "y": message.pitchspeed, "z": message.yawspeed}})
         elif kind == "GLOBAL_POSITION_INT":
-            speed = math.hypot(message.vx, message.vy) / 100.0
-            cog = 0.0 if message.hdg == 65535 else message.hdg / 100.0
-            valid = message.lat != 0 and message.lon != 0
-            self.store.update({"gps": {"lat": message.lat / 1e7, "lon": message.lon / 1e7,
-                                       "sog": speed, "cog": cog, "fix": valid},
-                               "linear": {"x": message.vx / 100.0, "y": message.vy / 100.0, "z": message.vz / 100.0},
-                               "speed": speed, "position": {"z": message.relative_alt / 1000.0},
-                               "sensors": {"gps": valid}})
-            self.store.refresh_navigation()
+            speed = math.hypot(message.vx / 100.0, message.vy / 100.0)
+            # Menghapus cog = message.hdg karena hdg adalah heading (kompas), bukan Course Over Ground
+            self.store.update({"gps": {"lat": message.lat / 1e7, "lon": message.lon / 1e7, "fix": message.lat != 0 and message.lon != 0}, "linear": {"x": message.vx / 100.0, "y": message.vy / 100.0, "z": message.vz / 100.0}, "speed": speed, "position": {"z": message.relative_alt / 1000.0}})
         elif kind == "LOCAL_POSITION_NED":
+            # UI ZIP memakai X=East, Y=North, Z=Up.
             self.store.update({"position": {"x": message.y, "y": message.x, "z": -message.z}})
         elif kind == "GPS_RAW_INT":
             hdop = 99.9 if message.eph == 65535 else message.eph / 100.0
-            self.store.update({"gps": {"satellites": message.satellites_visible,
-                                       "hdop": hdop, "fix": message.fix_type >= 3}})
+            patch = {"satellites": message.satellites_visible, "hdop": hdop, "fix": message.fix_type >= 3}
+            if message.vel != 65535:
+                patch["sog"] = message.vel / 100.0
+            if message.cog != 65535:
+                patch["cog"] = message.cog / 100.0
+            self.store.update({"gps": patch})
         elif kind == "SYS_STATUS":
-            self.store.update({"battery1": {"voltage": message.voltage_battery / 1000.0,
-                                             "current": max(0.0, message.current_battery / 100.0),
-                                             "percentage": max(0, message.battery_remaining)}})
+            self.store.update({"battery1": {"voltage": max(0, message.voltage_battery) / 1000.0, "current": max(0, message.current_battery) / 100.0}})
+        elif kind == "BATTERY_STATUS":
+            cells = [v for v in message.voltages if v not in (0, 65535)]
+            self.store.update({"battery1": {"voltage": sum(cells) / 1000.0, "current": max(0, message.current_battery) / 100.0, "used": max(0, message.current_consumed), "temp": 0 if message.temperature == 32767 else message.temperature / 100.0}})
+        elif kind == "SERVO_OUTPUT_RAW":
+            self.store.update({"servo": [message.servo1_raw, message.servo2_raw, message.servo3_raw, message.servo4_raw]})
         elif kind == "MISSION_CURRENT":
-            patch = {"mission": {"current": int(message.seq)}}
-            total = int(getattr(message, "total", 0))
+            total = getattr(message, "total", 0)
+            patch = {"mission": {"current": message.seq}}
+            # Beberapa autopilot/dialect lama tidak mengisi field total (0).
+            # Jangan menimpa jumlah hasil MISSION_COUNT yang sudah valid.
             if total not in (0, 65535):
                 patch["mission"]["total"] = total
             self.store.update(patch)
-            self.store.refresh_navigation()
-        elif kind == "MISSION_COUNT" and self.downloading:
-            self.pending_total, self.pending, self.retries = int(message.count), {}, 0
-            if self.pending_total == 0:
+        elif kind == "MISSION_COUNT":
+            self.pending_total, self.pending_waypoints = message.count, []
+            if message.count:
+                self._request_item(0)
+            else:
                 self.store.replace_mission([])
                 self.downloading = False
-            else:
-                self._request_item(0)
-        elif kind in ("MISSION_ITEM_INT", "MISSION_ITEM") and self.downloading:
+        elif kind in ("MISSION_ITEM_INT", "MISSION_ITEM"):
             self._store_mission_item(message, kind == "MISSION_ITEM_INT")
 
-    def _store_mission_item(self, message, integer):
-        global_frames = {getattr(mavutil.mavlink, name) for name in (
-            "MAV_FRAME_GLOBAL", "MAV_FRAME_GLOBAL_RELATIVE_ALT", "MAV_FRAME_GLOBAL_TERRAIN_ALT",
-            "MAV_FRAME_GLOBAL_INT", "MAV_FRAME_GLOBAL_RELATIVE_ALT_INT",
-            "MAV_FRAME_GLOBAL_TERRAIN_ALT_INT") if hasattr(mavutil.mavlink, name)}
-        is_global = message.frame in global_frames
-        self.pending[int(message.seq)] = {
-            "seq": int(message.seq), "command": int(message.command), "frame": int(message.frame),
-            "lat": message.x / 1e7 if integer and is_global else (float(message.x) if is_global else None),
-            "lon": message.y / 1e7 if integer and is_global else (float(message.y) if is_global else None),
-            "x": None if is_global else float(message.x), "y": None if is_global else float(message.y),
-            "alt": float(message.z), "param1": float(message.param1), "param2": float(message.param2),
-            "param3": float(message.param3), "param4": float(message.param4),
-            "acceptanceRadius": float(message.param2) if message.param2 > 0 else self.reached_radius,
-            "autocontinue": bool(message.autocontinue)}
-        self.retries = 0
-        missing = self._next_missing()
-        if missing is None:
-            self.store.replace_mission([self.pending[i] for i in range(self.pending_total)])
-            self.downloading = False
-            self.last_request = time.monotonic()
-            print(f"[MAVLINK] Mission tersinkron: {self.pending_total} item")
+    def handle_command(self, cmd: dict) -> dict:
+        import os
+        enabled = os.getenv("ASV_ENABLE_COMMANDS", "0") == "1"
+        if not enabled:
+            return {"sent": False, "reason": "ASV_ENABLE_COMMANDS=0"}
+        if self.master is None:
+            raise RuntimeError("MAVLink belum terhubung")
+        
+        name, action = cmd.get("command"), cmd.get("action")
+        mapping = self.master.mode_mapping() or {}
+        
+        if name == "arm":
+            if action == "estop":
+                self.master.mav.command_long_send(self.master.target_system, self.master.target_component, mavutil.mavlink.MAV_CMD_COMPONENT_ARM_DISARM, 0, 0, 21196, 0, 0, 0, 0, 0)
+            elif action == "arm":
+                self.master.arducopter_arm()
+            else:
+                self.master.arducopter_disarm()
+        elif name in ("set_mode", "go_home", "hold_position"):
+            mode = {"Manual": "MANUAL", "Auto": "AUTO", "Return Home": "RTL"}.get(cmd.get("mode")) if name == "set_mode" else ("RTL" if name == "go_home" else ("LOITER" if "LOITER" in mapping else "HOLD"))
+            if mode not in mapping:
+                raise ValueError(f"mode {mode} tidak tersedia")
+            self.master.set_mode(mapping[mode])
+        elif name == "mission" and action == "start":
+            self.master.mav.command_long_send(self.master.target_system, self.master.target_component, mavutil.mavlink.MAV_CMD_MISSION_START, 0, 0, 0, 0, 0, 0, 0, 0)
+        elif name == "set_home":
+            self.master.mav.command_long_send(self.master.target_system, self.master.target_component, mavutil.mavlink.MAV_CMD_DO_SET_HOME, 0, 1, 0, 0, 0, 0, 0, 0)
         else:
-            self._request_item(missing)
+            return {"sent": False, "reason": "state-only command"}
+        return {"sent": True}
+
+    def _store_mission_item(self, message, integer: bool) -> None:
+        names = ("MAV_FRAME_GLOBAL", "MAV_FRAME_GLOBAL_RELATIVE_ALT", "MAV_FRAME_GLOBAL_TERRAIN_ALT", "MAV_FRAME_GLOBAL_INT", "MAV_FRAME_GLOBAL_RELATIVE_ALT_INT", "MAV_FRAME_GLOBAL_TERRAIN_ALT_INT")
+        global_frames = {getattr(mavutil.mavlink, name) for name in names if hasattr(mavutil.mavlink, name)}
+        is_global = message.frame in global_frames
+        waypoint = {
+            "seq": message.seq, "command": message.command, "frame": message.frame,
+            "lat": message.x / 1e7 if integer and is_global else (message.x if is_global else None),
+            "lon": message.y / 1e7 if integer and is_global else (message.y if is_global else None),
+            "alt": message.z, "param1": message.param1, "param2": message.param2,
+            "param3": message.param3, "param4": message.param4,
+            "autocontinue": bool(message.autocontinue),
+        }
+        self.pending_waypoints = [item for item in self.pending_waypoints if item["seq"] != message.seq]
+        self.pending_waypoints.append(waypoint)
+        self.pending_waypoints.sort(key=lambda item: item["seq"])
+        if message.seq + 1 < self.pending_total:
+            self._request_item(message.seq + 1)
+        else:
+            self.store.replace_mission(self.pending_waypoints)
+            self.downloading = False
+            print(f"[MAVLINK] Mission tersinkron: {len(self.pending_waypoints)} item")
+
