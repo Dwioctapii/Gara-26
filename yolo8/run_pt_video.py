@@ -10,7 +10,20 @@ from pathlib import Path
 
 import cv2
 
+from buoy_pairing import buoy_color, frontmost_pair, pair_buoys
+from pixel_distance import average_valid_distances, estimate_camera_distance_m
 from run_pt import YOLODirectML
+
+
+# SATU-SATUNYA pengaturan orientasi lintasan.
+#
+# PENTING -- jangan tafsirkan sebagai separuh kanan/kiri GAMBAR:
+#   "right" = buoy HIJAU harus berada di kanan buoy MERAH dalam satu pasangan.
+#   "left"  = buoy HIJAU harus berada di kiri buoy MERAH dalam satu pasangan.
+#
+# Midpoint pasangan boleh berada di mana pun dalam frame. Pemilihan target
+# terdekat selalu dilakukan secara global dari posisi dasar bbox paling bawah.
+FOCUS_SIDE = "right"
 
 
 # ============================================================================
@@ -189,11 +202,11 @@ class LowLatencyWebSocketSender:
 #
 # Slider:
 #
-#   Reference Distance
-#       jarak fisik objek saat kalibrasi
+#   Known Object Width
+#       panjang/lebar nyata buoy dalam centimeter
 #
-#   Reference BBox Width
-#       lebar bounding box YOLO pada jarak tersebut
+#   Camera Focal Length
+#       focal length horizontal kamera dalam pixel
 #
 # Nilai slider dibaca LANGSUNG setiap frame.
 #
@@ -202,7 +215,7 @@ class LowLatencyWebSocketSender:
 #       slider berubah
 #           |
 #           v
-#       nilai kalibrasi berubah
+#       parameter pixel-distance berubah
 #           |
 #           +------> overlay distance
 #           |
@@ -221,12 +234,12 @@ class LowLatencyWebSocketSender:
 
 
 class CalibrationUI:
-    """Panel slider untuk melakukan kalibrasi distance secara live."""
+    """Panel live untuk panjang object dan focal length pixel."""
 
     def __init__(
         self,
-        reference_distance: float,
-        reference_bbox_width: float,
+        object_width_cm: float,
+        focal_length_px: float,
     ):
         # Lazy import supaya Tkinter hanya diperlukan ketika UI digunakan.
         try:
@@ -244,11 +257,11 @@ class CalibrationUI:
         #
         # Cache diperlukan karena user bisa menutup window Tkinter sementara
         # video masih terus berjalan.
-        self.reference_distance = reference_distance
-        self.reference_bbox_width = reference_bbox_width
+        self.object_width_cm = object_width_cm
+        self.focal_length_px = focal_length_px
         self.root = tk.Tk()
 
-        self.root.title("YOLO Distance Calibration")
+        self.root.title("YOLO Pixel Distance Parameters")
         self.root.geometry("480x260")
         self.root.resizable(True, False)
 
@@ -256,29 +269,27 @@ class CalibrationUI:
         # VARIABLE TKINTER
         # --------------------------------------------------------------------
 
-        self.distance_var = tk.DoubleVar(value=reference_distance)
-        self.width_var = tk.DoubleVar(value=reference_bbox_width)
+        self.distance_var = tk.DoubleVar(value=object_width_cm)
+        self.width_var = tk.DoubleVar(value=focal_length_px)
 
         # --------------------------------------------------------------------
-        # REFERENCE DISTANCE
+        # KNOWN OBJECT WIDTH (CM)
         # --------------------------------------------------------------------
         #
-        # Range dibuat 0.1 sampai 20 meter.
-        #
-        # Kalau arena lebih besar bisa dinaikkan.
+        # Range 1 sampai 200 cm untuk ukuran nyata object target.
         # --------------------------------------------------------------------
 
         tk.Label(
             self.root,
-            text="Reference Distance (meter)",
+            text="Known Object Width (centimeter)",
             font=("Arial", 11, "bold"),
         ).pack(padx=10, pady=(12, 0), anchor="w")
 
         self.distance_scale = tk.Scale(
             self.root,
-            from_=0.1,
-            to=20.0,
-            resolution=0.05,
+            from_=1.0,
+            to=200.0,
+            resolution=0.5,
             orient=tk.HORIZONTAL,
             variable=self.distance_var,
             length=450,
@@ -288,24 +299,22 @@ class CalibrationUI:
         self.distance_scale.pack(padx=10, fill="x")
 
         # --------------------------------------------------------------------
-        # REFERENCE BBOX WIDTH
+        # CAMERA FOCAL LENGTH (PX)
         # --------------------------------------------------------------------
         #
-        # Range 1 sampai 1500 pixel.
-        #
-        # Cukup untuk video 640p, 720p, 1080p, dan sebagian besar input umum.
+        # Range 1 sampai 3000 pixel untuk berbagai kamera/FOV.
         # --------------------------------------------------------------------
 
         tk.Label(
             self.root,
-            text="Reference Bounding Box Width (pixel)",
+            text="Camera Focal Length (pixel)",
             font=("Arial", 11, "bold"),
         ).pack(padx=10, pady=(8, 0), anchor="w")
 
         self.width_scale = tk.Scale(
             self.root,
             from_=1,
-            to=1500,
+            to=3000,
             resolution=1,
             orient=tk.HORIZONTAL,
             variable=self.width_var,
@@ -321,7 +330,7 @@ class CalibrationUI:
 
         self.info_label = tk.Label(
             self.root,
-            text="D = D_ref * W_ref / W_current",
+            text="D_m = (object_cm / 100) * focal_px / bbox_px",
             font=("Consolas", 10),
         )
 
@@ -351,8 +360,8 @@ class CalibrationUI:
 
         try:
             # Simpan nilai terbaru sebelum event loop berikutnya.
-            self.reference_distance = max(0.001, float(self.distance_var.get()))
-            self.reference_bbox_width = max(1.0, float(self.width_var.get()))
+            self.object_width_cm = max(0.001, float(self.distance_var.get()))
+            self.focal_length_px = max(1.0, float(self.width_var.get()))
 
             self.root.update_idletasks()
             self.root.update()
@@ -362,17 +371,17 @@ class CalibrationUI:
             self.root = None
 
     def get_values(self) -> tuple[float, float]:
-        """Ambil nilai kalibrasi terbaru."""
+        """Ambil object width cm dan focal length px terbaru."""
 
         # Kalau window masih hidup, baca nilai terbaru terlebih dahulu.
         if self.root is not None:
             try:
-                self.reference_distance = max(
+                self.object_width_cm = max(
                     0.001,
                     float(self.distance_var.get()),
                 )
 
-                self.reference_bbox_width = max(
+                self.focal_length_px = max(
                     1.0,
                     float(self.width_var.get()),
                 )
@@ -380,7 +389,7 @@ class CalibrationUI:
             except self.tk.TclError:
                 pass
 
-        return self.reference_distance, self.reference_bbox_width
+        return self.object_width_cm, self.focal_length_px
 
     def close(self):
         """Tutup hanya calibration panel, bukan video."""
@@ -390,8 +399,8 @@ class CalibrationUI:
 
         # Pertahankan nilai terakhir slider.
         try:
-            self.reference_distance = max(0.001, float(self.distance_var.get()))
-            self.reference_bbox_width = max(1.0, float(self.width_var.get()))
+            self.object_width_cm = max(0.001, float(self.distance_var.get()))
+            self.focal_length_px = max(1.0, float(self.width_var.get()))
         except self.tk.TclError:
             pass
 
@@ -404,60 +413,81 @@ class CalibrationUI:
 
 
 # ============================================================================
-# DISTANCE ESTIMATION
+# CAMERA-TO-OBJECT PIXEL DISTANCE
 # ============================================================================
 #
-# Estimasi jarak menggunakan LEBAR bounding box.
+# Rumus pinhole memakai LEBAR bbox float, bukan tinggi dan bukan koordinat yang
+# sudah dibulatkan untuk OpenCV:
 #
-# BUKAN tinggi.
+#       distance_m = (object_width_cm / 100) * focal_px / bbox_width_px
 #
-# Rumus:
+# Contoh parameter CLI:
 #
-#       D = D_ref * W_ref / W_current
+#       --object-width-cm 35 --focal-length-px 200
 #
-# D:
-#       jarak objek sekarang
+# Jika lebar bbox hasil YOLO adalah 5 px:
 #
-# D_ref:
-#       jarak objek ketika dilakukan kalibrasi
+#       distance = (35 / 100) * 200 / 5
+#                = 14 meter
 #
-# W_ref:
-#       lebar bbox ketika kalibrasi
+# Nama argumen lama tetap menjadi alias agar command lama tidak error:
 #
-# W_current:
-#       lebar bbox detection sekarang
-#
-# Contoh:
-#
-#       D_ref = 2 meter
-#       W_ref = 200 pixel
-#
-# Kalau sekarang:
-#
-#       W_current = 100 pixel
-#
-# Maka:
-#
-#       D = 2 * 200 / 100
-#         = 4 meter
+#       --ref-distance    == --object-width-cm   (nilai dalam cm)
+#       --ref-bbox-width  == --focal-length-px   (nilai dalam px)
 #
 # ============================================================================
 
 
 def estimate_distance(
     bbox,
-    reference_distance: float,
-    reference_bbox_width: float,
+    object_width_cm: float,
+    focal_length_px: float,
 ) -> float | None:
-    """Hitung estimasi jarak berdasarkan WIDTH bounding box."""
+    """Compatibility wrapper untuk estimator pixel yang unitnya eksplisit."""
 
-    x1, _, x2, _ = bbox
-    bbox_width = float(x2 - x1)
+    return estimate_camera_distance_m(
+        bbox,
+        object_width_cm=object_width_cm,
+        focal_length_px=focal_length_px,
+    )
 
-    if bbox_width <= 0:
-        return None
 
-    return reference_distance * reference_bbox_width / bbox_width
+def apply_bbox_distances_to_pairs(
+    pairs,
+    detections,
+    object_width_cm: float,
+    focal_length_px: float,
+):
+    """Isi jarak object dan midpoint dengan pinhole pixel-distance.
+
+    Pairing dan pemilihan target tetap memakai geometri dasar bbox/Y2. Fungsi
+    ini HANYA mengisi nilai meter dari panjang object, focal length pixel, dan
+    lebar bbox masing-masing buoy. Pairing/garis tidak diubah di sini.
+    """
+
+    for pair in pairs:
+        green_distance = estimate_distance(
+            detections[pair["green_index"]]["box"],
+            object_width_cm,
+            focal_length_px,
+        )
+        red_distance = estimate_distance(
+            detections[pair["red_index"]]["box"],
+            object_width_cm,
+            focal_length_px,
+        )
+        midpoint_distance = average_valid_distances(
+            green_distance,
+            red_distance,
+        )
+
+        pair["green_distance_m"] = green_distance
+        pair["red_distance_m"] = red_distance
+        pair["distance_m"] = midpoint_distance
+        pair["forward_distance_m"] = midpoint_distance
+        pair["distance_source"] = "known_width_pixels"
+
+    return pairs
 
 
 # ============================================================================
@@ -498,15 +528,23 @@ def estimate_distance(
 def build_buoy_payload(
     detections,
     frame_width: int,
-    reference_distance: float,
-    reference_bbox_width: float,
+    object_width_cm: float,
+    focal_length_px: float,
+    pairs=None,
+    target_pair=None,
 ) -> dict:
-    """Buat state buoy untuk dikirim melalui WebSocket."""
+    """Buat state buoy dan pasangan merah-hijau untuk WebSocket."""
 
+    pairs = pairs or []
     buoys = []
+    paired_ids = {}
 
-    for detection in detections:
-        x1, _, x2, _ = map(float, detection["box"])
+    for pair in pairs:
+        paired_ids[pair["green_index"]] = pair["id"]
+        paired_ids[pair["red_index"]] = pair["id"]
+
+    for detection_index, detection in enumerate(detections):
+        x1, y1, x2, y2 = map(float, detection["box"])
 
         bbox_width = x2 - x1
 
@@ -514,25 +552,77 @@ def build_buoy_payload(
             continue
 
         center_x = (x1 + x2) * 0.5
+        center_y = (y1 + y2) * 0.5
 
         # Ubah posisi horizontal pixel menjadi -1 sampai +1.
         horizontal_position = (center_x / (frame_width * 0.5)) - 1.0
 
+        # Semua buoy kembali memakai rumus awal berbasis lebar bbox. Status
+        # paired/unpaired tidak boleh mengubah sumber nilai meter.
         distance = estimate_distance(
             detection["box"],
-            reference_distance,
-            reference_bbox_width,
+            object_width_cm,
+            focal_length_px,
         )
+        distance_source = "known_width_pixels"
 
         buoys.append({
             "class": detection["class_name"],
             "confidence": round(float(detection["score"]), 4),
             "distance": round(distance, 3) if distance is not None else None,
+            "distance_source": distance_source,
+            "pair_id": paired_ids.get(detection_index),
             "x": round(horizontal_position, 4),
+            "center_px": {
+                "x": round(center_x, 2),
+                "y": round(center_y, 2),
+            },
             "width": round(bbox_width, 1),
         })
 
-    return {"buoys": buoys}
+    pair_payload = []
+
+    for pair in pairs:
+        midpoint_x, midpoint_y = pair["midpoint"]
+        pair_payload.append({
+            "id": pair["id"],
+            "is_target": pair is target_pair,
+            "front_y": round(pair["front_y"], 2),
+            "distance_source": pair["distance_source"],
+            "green_detection_index": pair["green_index"],
+            "red_detection_index": pair["red_index"],
+            "known_width_m": round(pair["known_width_m"], 3),
+            "pixel_distance": round(pair["pixel_distance"], 2),
+            "horizontal_pixel_distance": round(
+                pair["horizontal_pixel_distance"], 2
+            ),
+            "midpoint_px": {
+                "x": round(midpoint_x, 2),
+                "y": round(midpoint_y, 2),
+            },
+            "midpoint_x": round(
+                (midpoint_x / (frame_width * 0.5)) - 1.0,
+                4,
+            ),
+            "distance": (
+                round(pair["distance_m"], 3)
+                if pair["distance_m"] is not None
+                else None
+            ),
+            "forward_distance": (
+                round(pair["forward_distance_m"], 3)
+                if pair["forward_distance_m"] is not None
+                else None
+            ),
+            "bearing_degrees": round(pair["bearing_degrees"], 2),
+        })
+
+    return {
+        "buoys": buoys,
+        "pairs": pair_payload,
+        "target_pair_id": target_pair["id"] if target_pair else None,
+        "focus_side": FOCUS_SIDE,
+    }
 
 
 # ============================================================================
@@ -543,22 +633,27 @@ def build_buoy_payload(
 def draw_detections_with_distance(
     frame,
     detections,
-    reference_distance: float,
-    reference_bbox_width: float,
+    object_width_cm: float,
+    focal_length_px: float,
+    pairs=None,
+    target_pair=None,
 ):
-    """Gambar bbox + confidence + WIDTH-based distance + bbox width."""
+    """Gambar bbox, jarak buoy, pasangan, midpoint, dan garis POV."""
 
     frame_height = frame.shape[0]
+    pairs = pairs or []
 
-    for detection in detections:
+    for detection_index, detection in enumerate(detections):
         x1, y1, x2, y2 = map(int, detection["box"])
         class_name = detection["class_name"]
         confidence = detection["score"]
 
+        # Sama seperti versi awal: jarak setiap detection selalu dihitung dari
+        # lebar bbox-nya sendiri, termasuk detection yang sudah berpasangan.
         distance = estimate_distance(
             detection["box"],
-            reference_distance,
-            reference_bbox_width,
+            object_width_cm,
+            focal_length_px,
         )
 
         if distance is not None:
@@ -566,8 +661,15 @@ def draw_detections_with_distance(
         else:
             label = f"{class_name} {confidence:.2f}"
 
-        # Bounding box.
-        cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
+        color_name = buoy_color(detection)
+        box_color = (
+            (0, 0, 255) if color_name == "red"
+            else (0, 255, 0) if color_name == "green"
+            else (0, 255, 255)
+        )
+
+        # Bounding box mengikuti warna buoy; kelas lain dibuat kuning.
+        cv2.rectangle(frame, (x1, y1), (x2, y2), box_color, 2)
 
         # Ukuran label.
         (text_width, text_height), baseline = cv2.getTextSize(
@@ -584,7 +686,7 @@ def draw_detections_with_distance(
             frame,
             (x1, text_y - text_height - baseline - 6),
             (x1 + text_width + 8, text_y + 2),
-            (0, 255, 0),
+            box_color,
             -1,
         )
 
@@ -600,7 +702,7 @@ def draw_detections_with_distance(
             cv2.LINE_AA,
         )
 
-        # Width aktual ditampilkan untuk membantu mencari nilai W_ref.
+        # Width pixel aktual ditampilkan untuk audit rumus jarak.
         bbox_width = x2 - x1
 
         cv2.putText(
@@ -609,8 +711,79 @@ def draw_detections_with_distance(
             (x1, min(frame_height - 10, y2 + 20)),
             cv2.FONT_HERSHEY_SIMPLEX,
             0.45,
-            (0, 255, 0),
+            box_color,
             1,
+            cv2.LINE_AA,
+        )
+
+    pov = (frame.shape[1] // 2, frame_height - 1)
+    cv2.circle(frame, pov, 6, (255, 255, 255), -1, cv2.LINE_AA)
+    cv2.putText(
+        frame,
+        "POV",
+        (pov[0] + 9, max(18, pov[1] - 8)),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.50,
+        (255, 255, 255),
+        2,
+        cv2.LINE_AA,
+    )
+
+    for pair in pairs:
+        green_point = tuple(round(value) for value in pair["green_center"])
+        red_point = tuple(round(value) for value in pair["red_center"])
+        midpoint = tuple(round(value) for value in pair["midpoint"])
+        is_target = pair is target_pair
+
+        # Garis cyan menunjukkan semua pasangan valid untuk debugging.
+        # HANYA pair yang sudah dipilih satu kali di main loop boleh mendapat
+        # garis POV magenta. Jangan memilih target ulang di fungsi drawing.
+        cv2.line(frame, green_point, red_point, (255, 255, 0), 2, cv2.LINE_AA)
+        if is_target:
+            cv2.line(frame, pov, midpoint, (255, 0, 255), 3, cv2.LINE_AA)
+        cv2.circle(frame, midpoint, 7, (255, 255, 0), -1, cv2.LINE_AA)
+        cv2.drawMarker(
+            frame,
+            midpoint,
+            (0, 0, 0),
+            cv2.MARKER_CROSS,
+            13,
+            2,
+            cv2.LINE_AA,
+        )
+
+        pair_label = (
+            f"PAIR {pair['id']} | {pair['pixel_distance']:.2f}px"
+            f" = {pair['known_width_m']:.2f}m"
+        )
+        if is_target:
+            distance_label = (
+                f"TARGET TERDEKAT {pair['distance_m']:.2f}m | "
+                f"arah {pair['bearing_degrees']:+.1f}deg"
+            )
+        else:
+            distance_label = f"KAPAL->MID {pair['distance_m']:.2f}m"
+        label_x = max(5, min(midpoint[0] - 120, frame.shape[1] - 330))
+        label_y = max(42, midpoint[1] - 18)
+
+        cv2.putText(
+            frame,
+            pair_label,
+            (label_x, label_y),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.50,
+            (255, 255, 0),
+            2,
+            cv2.LINE_AA,
+        )
+        cv2.putText(
+            frame,
+            distance_label,
+            (label_x, label_y + 19),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.48,
+            (255, 0, 255) if is_target else (255, 255, 0),
+            2,
             cv2.LINE_AA,
         )
 
@@ -624,7 +797,7 @@ def draw_detections_with_distance(
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="YOLOv8 VIDEO FILE + width distance + calibration UI + WebSocket"
+        description="YOLOv8 + pixel camera distance + buoy pairing + WebSocket"
     )
 
     # ------------------------------------------------------------------------
@@ -657,21 +830,47 @@ def main() -> int:
     parser.add_argument("--no-show", action="store_true", help="Jangan tampilkan OpenCV preview")
 
     # ------------------------------------------------------------------------
-    # DISTANCE CALIBRATION
+    # PIXEL DISTANCE PARAMETERS
     # ------------------------------------------------------------------------
 
     parser.add_argument(
+        "--object-width-cm",
         "--ref-distance",
+        dest="object_width_cm",
         type=float,
-        default=2.0,
-        help="Reference distance dalam meter. Default: 2.0",
+        default=35.0,
+        help=(
+            "Lebar nyata object dalam centimeter. "
+            "--ref-distance dipertahankan sebagai alias. Default: 35"
+        ),
     )
 
     parser.add_argument(
+        "--focal-length-px",
         "--ref-bbox-width",
+        dest="focal_length_px",
         type=float,
         default=200.0,
-        help="Reference bbox WIDTH dalam pixel. Default: 200",
+        help=(
+            "Focal length kamera dalam pixel. "
+            "--ref-bbox-width dipertahankan sebagai alias. Default: 200"
+        ),
+    )
+
+    # Jarak paired-buoy dihitung otomatis dari bentang aturan ASV 2 meter.
+    # HFOV adalah spesifikasi tetap kamera, bukan kalibrasi jarak per lokasi.
+    parser.add_argument(
+        "--buoy-pair-width",
+        type=float,
+        default=2.0,
+        help="Jarak nyata pusat buoy hijau-merah. Default: 2.0 meter",
+    )
+
+    parser.add_argument(
+        "--pair-max-vertical-gap",
+        type=float,
+        default=0.20,
+        help="Batas selisih Y pasangan terhadap tinggi frame. Default: 0.20",
     )
 
     # ------------------------------------------------------------------------
@@ -688,7 +887,7 @@ def main() -> int:
     parser.add_argument(
         "--calibration-ui",
         action="store_true",
-        help="Tampilkan slider Tkinter untuk kalibrasi distance secara live",
+        help="Slider live untuk object width cm dan focal length px",
     )
 
     # ------------------------------------------------------------------------
@@ -703,11 +902,17 @@ def main() -> int:
 
     args = parser.parse_args()
 
-    if args.ref_distance <= 0:
-        raise ValueError("--ref-distance harus > 0")
+    if args.object_width_cm <= 0:
+        raise ValueError("--object-width-cm harus > 0")
 
-    if args.ref_bbox_width <= 0:
-        raise ValueError("--ref-bbox-width harus > 0")
+    if args.focal_length_px <= 0:
+        raise ValueError("--focal-length-px harus > 0")
+
+    if args.buoy_pair_width <= 0:
+        raise ValueError("--buoy-pair-width harus > 0")
+
+    if not 0 <= args.pair_max_vertical_gap <= 1:
+        raise ValueError("--pair-max-vertical-gap harus di antara 0 dan 1")
 
     # ------------------------------------------------------------------------
     # VIDEO FILE ONLY
@@ -739,8 +944,8 @@ def main() -> int:
 
     if args.calibration_ui:
         calibration_ui = CalibrationUI(
-            reference_distance=args.ref_distance,
-            reference_bbox_width=args.ref_bbox_width,
+            object_width_cm=args.object_width_cm,
+            focal_length_px=args.focal_length_px,
         )
 
     # ------------------------------------------------------------------------
@@ -756,10 +961,10 @@ def main() -> int:
     # OPEN VIDEO FILE
     # ------------------------------------------------------------------------
 
-    cap = cv2.VideoCapture(0)
+    # cap = cv2.VideoCapture(0)
 
 
-    # cap = cv2.VideoCapture(str(video_path))
+    cap = cv2.VideoCapture(str(video_path))
 
     if not cap.isOpened():
         if calibration_ui:
@@ -835,11 +1040,12 @@ def main() -> int:
 
     print()
     print("=" * 60)
-    print("DISTANCE CALIBRATION")
+    print("CAMERA-TO-OBJECT PIXEL DISTANCE")
     print("=" * 60)
-    print(f"Reference distance   : {args.ref_distance:.2f} m")
-    print(f"Reference bbox width : {args.ref_bbox_width:.2f} px")
-    print("Formula              : D = D_ref * W_ref / W")
+    print(f"Known object width   : {args.object_width_cm:.2f} cm")
+    print(f"Camera focal length  : {args.focal_length_px:.2f} px")
+    print("Formula              : D = (width_cm/100) * focal_px / bbox_px")
+    print(f"Pair span metadata   : {args.buoy_pair_width:.2f} m")
 
     print()
     print("=" * 60)
@@ -876,12 +1082,12 @@ def main() -> int:
             if calibration_ui:
                 calibration_ui.update()
 
-                reference_distance, reference_bbox_width = (
+                object_width_cm, focal_length_px = (
                     calibration_ui.get_values()
                 )
             else:
-                reference_distance = args.ref_distance
-                reference_bbox_width = args.ref_bbox_width
+                object_width_cm = args.object_width_cm
+                focal_length_px = args.focal_length_px
 
             # ----------------------------------------------------------------
             # READ VIDEO FRAME
@@ -900,13 +1106,47 @@ def main() -> int:
 
             detections, inference_ms = engine.predict(frame)
 
+            # ---------------------------------------------------------------
+            # PAIR BUOY HIJAU-MERAH
+            # ---------------------------------------------------------------
+            # Semua koordinat tetap float sehingga jarak pixel dan midpoint
+            # dapat memiliki angka desimal. Pembulatan hanya saat menggambar.
+
+            pairs = pair_buoys(
+                detections,
+                frame_width=width,
+                frame_height=height,
+                known_pair_width_m=args.buoy_pair_width,
+                max_vertical_gap_ratio=args.pair_max_vertical_gap,
+                focus_side=FOCUS_SIDE,
+            )
+
+            # Jarak meter dikembalikan ke metode awal. Pairing 2 meter hanya
+            # menyediakan struktur gerbang, pixel distance, dan midpoint.
+            # Nilai object/focal terbaru dari slider diterapkan pada frame ini.
+            apply_bbox_distances_to_pairs(
+                pairs,
+                detections,
+                object_width_cm,
+                focal_length_px,
+            )
+
+            # SATU sumber kebenaran target untuk frame ini:
+            #
+            # 1. pair_buoys sudah membuang orientasi pasangan yang salah;
+            # 2. frontmost_pair memilih front_y terbesar di SELURUH frame;
+            # 3. object dict yang sama diteruskan ke payload DAN drawing.
+            #
+            # Dilarang memilih ulang berdasarkan sisi/tengah frame di bawah.
+            target_pair = frontmost_pair(pairs)
+
             # ----------------------------------------------------------------
             # WEBSOCKET
             # ----------------------------------------------------------------
             #
             # Perhatikan:
             #
-            # reference_distance dan reference_bbox_width di sini merupakan
+            # object_width_cm dan focal_length_px di sini merupakan
             # nilai slider TERBARU.
             #
             # Jadi perubahan slider langsung mempengaruhi WebSocket.
@@ -917,8 +1157,10 @@ def main() -> int:
                     build_buoy_payload(
                         detections,
                         frame_width=width,
-                        reference_distance=reference_distance,
-                        reference_bbox_width=reference_bbox_width,
+                        object_width_cm=object_width_cm,
+                        focal_length_px=focal_length_px,
+                        pairs=pairs,
+                        target_pair=target_pair,
                     )
                 )
 
@@ -929,8 +1171,10 @@ def main() -> int:
             draw_detections_with_distance(
                 frame,
                 detections,
-                reference_distance=reference_distance,
-                reference_bbox_width=reference_bbox_width,
+                object_width_cm=object_width_cm,
+                focal_length_px=focal_length_px,
+                pairs=pairs,
+                target_pair=target_pair,
             )
 
             # ----------------------------------------------------------------
@@ -965,8 +1209,9 @@ def main() -> int:
             )
 
             calibration_overlay = (
-                f"REF {reference_distance:.2f}m | "
-                f"W_REF {reference_bbox_width:.0f}px"
+                f"OBJECT {object_width_cm:.1f}cm | FOCAL {focal_length_px:.0f}px | "
+                f"GREEN-{FOCUS_SIDE.upper()} | "
+                f"target {target_pair['id'] if target_pair else '-'}"
             )
 
             cv2.putText(
@@ -1004,7 +1249,7 @@ def main() -> int:
 
             if not args.no_show:
                 cv2.imshow(
-                    "YOLOv8 Video - Width Distance Calibration",
+                    "YOLOv8 - Pixel Distance + Buoy Pairing",
                     frame,
                 )
 
@@ -1029,7 +1274,7 @@ def main() -> int:
                 f"{inference_ms:7.2f} ms | "
                 f"{processing_fps_ema:6.2f} FPS | "
                 f"{len(detections):3d} objects | "
-                f"REF {reference_distance:.2f}m/{reference_bbox_width:.0f}px",
+                f"{len(pairs):2d} pairs",
                 end="",
                 flush=True,
             )
