@@ -93,9 +93,15 @@ class VisionWorker:
                     # Mengambil gambar kamera bawah yang sudah di-standby (agar gambarnya real-time)
                     img_to_save = frame_bawah if frame_bawah is not None else frame_atas
                     cv2.imwrite(str(self.photo_dir / "bawah.jpg"), img_to_save)
+                    ok, jpeg = cv2.imencode(".jpg", img_to_save)
+                    if ok:
+                        self.store.set_photo("bawah", jpeg.tobytes())
                     self.store.update({"detection": {"label": "BOXBLUE (LOCKED & SAVED)", "foto_bawah_ready": True}})
                     return
                 if "green" in name and not snapshot["foto_atas_ready"]:
                     cv2.imwrite(str(self.photo_dir / "atas.jpg"), frame_atas)
+                    ok, jpeg = cv2.imencode(".jpg", frame_atas)
+                    if ok:
+                        self.store.set_photo("atas", jpeg.tobytes())
                     self.store.update({"detection": {"label": "BOXGREEN (LOCKED & SAVED)", "foto_atas_ready": True}})
                     return

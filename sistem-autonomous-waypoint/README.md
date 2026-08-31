@@ -1,8 +1,9 @@
 # Sistem Autonomous Waypoint
 
 Backend ini mengintegrasikan pembacaan Pixhawk, sinkronisasi seluruh mission,
-dan foto YOLO dari PIS ke dalam kontrak HTTP/WebSocket yang sudah dipakai oleh
-`../client/dashboard.js`. Klien web ZIP tidak diubah.
+dan foto YOLO dari PIS. Seluruh state dashboard, termasuk foto JPEG base64,
+dikirim sebagai snapshot JSON lewat WebSocket. HTTP hanya dipakai client untuk
+mengirim command dari tombol.
 
 ## Jalankan
 
@@ -45,10 +46,12 @@ Mission ditarik ulang setiap satu detik. Perubahan yang diunggah dari Mission
 Planner akan menggantikan `mission.waypoints` hanya setelah daftar barunya
 lengkap diterima.
 
-## Endpoint
+## Transport
 
-- `GET /health`, `/state`, `/status`, `/atas.jpg`, `/bawah.jpg` di port `8766`.
-- WebSocket telemetry di port `8765`.
+- `POST /api/command` di port `8766` menerima command JSON dari tombol.
+- `GET /health` di port `8766` hanya untuk pemeriksaan proses.
+- WebSocket di port `8765` membroadcast snapshot JSON lengkap.
 
-`/status` mengembalikan `{"atas": true, "bawah": true}` agar photo polling
-pada web client ZIP berjalan tanpa perubahan.
+Foto berada pada `photos.atas` dan `photos.bawah` sebagai string base64 atau
+`null`. Dashboard selalu mengikuti nilai snapshot; nilai yang hilang atau
+`null` mengembalikan tampilan kamera ke placeholder.

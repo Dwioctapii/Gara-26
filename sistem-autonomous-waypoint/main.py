@@ -13,8 +13,8 @@ def main() -> None:
     PHOTO_DIR.mkdir(parents=True, exist_ok=True)
     mavlink = MavlinkWorker(MAVLINK_ENDPOINT, MAVLINK_BAUD, MISSION_REFRESH_SECONDS, store)
     mavlink.start()
-    start_http(HTTP_HOST, HTTP_PORT, PHOTO_DIR, store)
-    start_websocket(WS_HOST, WS_PORT, WS_HZ, store, mavlink.handle_command)
+    start_http(HTTP_HOST, HTTP_PORT, store, mavlink.handle_command)
+    start_websocket(WS_HOST, WS_PORT, WS_HZ, store)
     VisionWorker(CAM_ATAS_INDEX, CAM_BAWAH_INDEX, MODEL_PATH, PHOTO_DIR, store).start()
     try:
         from gui import run_dashboard

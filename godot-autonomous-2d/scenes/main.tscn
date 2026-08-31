@@ -1,6 +1,20 @@
-[gd_scene load_steps=2 format=3 uid="uid://cqmb6lpnbvbie"]
+[gd_scene load_steps=5 format=3 uid="uid://cqmb6lpnbvbie"]
 
 [ext_resource type="Script" uid="uid://dr733ympbk22w" path="res://scripts/path_planner.gd" id="1_o5qli"]
+[ext_resource type="Script" path="res://scripts/ui/map_renderer.gd" id="2_map"]
+[ext_resource type="Script" path="res://scripts/input/simulation_input.gd" id="3_input"]
+[ext_resource type="PackedScene" path="res://scenes/ui/status_hud.tscn" id="4_hud"]
 
-[node name="Node2D" type="Node2D"]
+[node name="ASVSimulation" type="Node2D"]
 script = ExtResource("1_o5qli")
+
+[node name="WorldView" type="Node2D" parent="."]
+script = ExtResource("2_map")
+
+[node name="InputController" type="Node" parent="."]
+script = ExtResource("3_input")
+
+[node name="UI" type="CanvasLayer" parent="."]
+layer = 10
+
+[node name="StatusHUD" parent="UI" instance=ExtResource("4_hud")]

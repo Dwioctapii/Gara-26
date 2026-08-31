@@ -295,7 +295,7 @@ def run_dashboard(store, photo_dir):
     state_adapter.arena_ref = arena
     
     def reset_capture():
-        store.update({"detection": {"label": "STANDBY", "foto_atas_ready": False, "foto_bawah_ready": False}})
+        store.clear_photos()
         # Hapus foto jika ada
         try:
             (Path(photo_dir) / "atas.jpg").unlink(missing_ok=True)

@@ -2,17 +2,18 @@ from __future__ import annotations
 
 import argparse
 import json
+import platform
 import socket
 import sys
 import threading
 import time
+import traceback
 from pathlib import Path
 
 import cv2
 
 from buoy_pairing import buoy_color, frontmost_pair, pair_buoys
 from pixel_distance import average_valid_distances, estimate_camera_distance_m
-from run_pt import YOLODirectML
 
 
 # SATU-SATUNYA pengaturan orientasi lintasan.
@@ -24,6 +25,69 @@ from run_pt import YOLODirectML
 # Midpoint pasangan boleh berada di mana pun dalam frame. Pemilihan target
 # terdekat selalu dilakukan secara global dari posisi dasar bbox paling bawah.
 FOCUS_SIDE = "right"
+
+
+def selected_backend(requested: str) -> str:
+    """Pilih CUDA otomatis pada Linux ARM64 (Jetson), DirectML selain itu."""
+
+    if requested != "auto":
+        return requested
+    machine = platform.machine().lower()
+    if sys.platform.startswith("linux") and machine in {"aarch64", "arm64"}:
+        return "cuda"
+    return "directml"
+
+
+def create_inference_engine(args):
+    """Lazy import agar Jetson tidak perlu menginstal ONNX Runtime DirectML."""
+
+    backend = selected_backend(args.backend)
+    if backend == "cuda":
+        from cuda_engine import YOLOCuda
+
+        engine_class = YOLOCuda
+    else:
+        from run_pt import YOLODirectML
+
+        engine_class = YOLODirectML
+
+    print(f"[ENGINE] Selected backend: {backend}")
+    return engine_class(
+        args.model,
+        imgsz=args.imgsz,
+        conf=args.conf,
+        iou=args.iou,
+        cpu=args.cpu,
+        force_export=args.force_export,
+    )
+
+
+def open_video_source(video: str | None, gstreamer: str | None):
+    """Buka file, USB camera index, atau pipeline GStreamer/CSI Jetson."""
+
+    if gstreamer:
+        capture = cv2.VideoCapture(gstreamer, cv2.CAP_GSTREAMER)
+        return capture, "gstreamer", "gstreamer"
+
+    if video is None:
+        raise ValueError("Berikan path video, camera ID, atau --gstreamer")
+
+    candidate = Path(video).expanduser()
+    if candidate.is_file():
+        capture = cv2.VideoCapture(str(candidate))
+        return capture, str(candidate), candidate.stem
+
+    try:
+        camera_id = int(video)
+    except ValueError as exc:
+        raise FileNotFoundError(f"Video tidak ditemukan: {candidate}") from exc
+
+    capture = cv2.VideoCapture(camera_id, cv2.CAP_V4L2)
+    if not capture.isOpened():
+        capture.release()
+        capture = cv2.VideoCapture(camera_id)
+    capture.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+    return capture, f"camera:{camera_id}", f"camera_{camera_id}"
 
 
 # ============================================================================
@@ -797,15 +861,25 @@ def draw_detections_with_distance(
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="YOLOv8 + pixel camera distance + buoy pairing + WebSocket"
+        description=(
+            "YOLOv8 DirectML/CUDA/TensorRT + distance + pairing + WebSocket"
+        )
     )
 
     # ------------------------------------------------------------------------
     # INPUT
     # ------------------------------------------------------------------------
 
-    parser.add_argument("model", help="Path model YOLO .pt")
-    parser.add_argument("video", help="Path VIDEO FILE input")
+    parser.add_argument("model", help="Path model YOLO .pt/.engine")
+    parser.add_argument(
+        "video",
+        nargs="?",
+        help="Path video atau camera ID, contoh 0. Opsional jika --gstreamer.",
+    )
+    parser.add_argument(
+        "--gstreamer",
+        help="Pipeline GStreamer untuk CSI camera Jetson (apit dengan quote)",
+    )
 
     # ------------------------------------------------------------------------
     # YOLO
@@ -815,7 +889,17 @@ def main() -> int:
     parser.add_argument("--conf", type=float, default=0.25, help="Confidence threshold")
     parser.add_argument("--iou", type=float, default=0.45, help="NMS IoU threshold")
     parser.add_argument("--cpu", action="store_true", help="Gunakan CPU")
-    parser.add_argument("--force-export", action="store_true", help="Export ulang PT -> ONNX")
+    parser.add_argument(
+        "--backend",
+        choices=("auto", "directml", "cuda"),
+        default="auto",
+        help="auto: CUDA di Jetson ARM64, DirectML di platform lain",
+    )
+    parser.add_argument(
+        "--force-export",
+        action="store_true",
+        help="DirectML: PT->ONNX; CUDA: PT->TensorRT FP16 di perangkat ini",
+    )
 
     # ------------------------------------------------------------------------
     # VIDEO
@@ -915,26 +999,24 @@ def main() -> int:
         raise ValueError("--pair-max-vertical-gap harus di antara 0 dan 1")
 
     # ------------------------------------------------------------------------
-    # VIDEO FILE ONLY
+    # VIDEO / CAMERA SOURCE
     # ------------------------------------------------------------------------
 
-    video_path = Path(args.video)
-
-    if not video_path.is_file():
-        raise FileNotFoundError(f"Video tidak ditemukan: {video_path}")
+    # Validasi dan buka source sebelum memuat model yang relatif mahal.
+    cap, source_label, output_stem = open_video_source(args.video, args.gstreamer)
+    if not cap.isOpened():
+        cap.release()
+        raise RuntimeError(f"Gagal membuka source: {source_label}")
 
     # ------------------------------------------------------------------------
     # YOLO ENGINE
     # ------------------------------------------------------------------------
 
-    engine = YOLODirectML(
-        args.model,
-        imgsz=args.imgsz,
-        conf=args.conf,
-        iou=args.iou,
-        cpu=args.cpu,
-        force_export=args.force_export,
-    )
+    try:
+        engine = create_inference_engine(args)
+    except Exception:
+        cap.release()
+        raise
 
     # ------------------------------------------------------------------------
     # CALIBRATION UI
@@ -958,25 +1040,21 @@ def main() -> int:
         ws_sender = LowLatencyWebSocketSender(args.ws_url)
 
     # ------------------------------------------------------------------------
-    # OPEN VIDEO FILE
+    # VIDEO SOURCE METADATA
     # ------------------------------------------------------------------------
 
-    # cap = cv2.VideoCapture(0)
-
-
-    cap = cv2.VideoCapture(str(video_path))
-
-    if not cap.isOpened():
+    # Ambil satu frame nyata; property width/height beberapa backend kamera
+    # bernilai nol sampai frame pertama diterima.
+    first_frame_ok, pending_frame = cap.read()
+    if not first_frame_ok or pending_frame is None:
+        cap.release()
         if calibration_ui:
             calibration_ui.close()
-
         if ws_sender:
             ws_sender.close()
+        raise RuntimeError(f"Source terbuka tetapi frame tidak dapat dibaca: {source_label}")
 
-        raise RuntimeError(f"Gagal membuka video: {video_path}")
-
-    width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-    height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    height, width = pending_frame.shape[:2]
     source_fps = float(cap.get(cv2.CAP_PROP_FPS))
     total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
 
@@ -990,7 +1068,7 @@ def main() -> int:
     output_path = (
         Path(args.output)
         if args.output
-        else Path("output") / f"{video_path.stem}_detected.mp4"
+        else Path("output") / f"{output_stem}_detected.mp4"
     )
 
     writer = None
@@ -1024,7 +1102,8 @@ def main() -> int:
     print("=" * 60)
     print("VIDEO INFORMATION")
     print("=" * 60)
-    print(f"Input          : {video_path}")
+    print(f"Input          : {source_label}")
+    print(f"Backend        : {selected_backend(args.backend)}")
     print(f"Resolution     : {width}x{height}")
     print(f"FPS source     : {source_fps:.3f}")
     print(f"Calibration UI : {'enabled' if calibration_ui else 'disabled'}")
@@ -1093,7 +1172,15 @@ def main() -> int:
             # READ VIDEO FRAME
             # ----------------------------------------------------------------
 
-            success, frame = cap.read()
+            camera_started = time.perf_counter()
+
+            if pending_frame is not None:
+                success, frame = True, pending_frame
+                pending_frame = None
+            else:
+                success, frame = cap.read()
+
+            camera_ms = (time.perf_counter() - camera_started) * 1000.0
 
             if not success:
                 break
@@ -1104,7 +1191,10 @@ def main() -> int:
             # YOLO INFERENCE
             # ----------------------------------------------------------------
 
+            predict_started = time.perf_counter()
             detections, inference_ms = engine.predict(frame)
+            predict_ms = (time.perf_counter() - predict_started) * 1000.0
+            post_started = time.perf_counter()
 
             # ---------------------------------------------------------------
             # PAIR BUOY HIJAU-MERAH
@@ -1177,6 +1267,8 @@ def main() -> int:
                 target_pair=target_pair,
             )
 
+            post_ms = (time.perf_counter() - post_started) * 1000.0
+
             # ----------------------------------------------------------------
             # FPS
             # ----------------------------------------------------------------
@@ -1204,7 +1296,7 @@ def main() -> int:
 
             overlay = (
                 f"PROC {processing_fps_ema:.1f} FPS | "
-                f"DML {inference_ms:.1f} ms | "
+                f"INFER {inference_ms:.1f} ms | "
                 f"objects {len(detections)}"
             )
 
@@ -1271,7 +1363,10 @@ def main() -> int:
 
             print(
                 f"\r[RUN] {progress_text} | "
-                f"{inference_ms:7.2f} ms | "
+                f"TRT {inference_ms:6.2f} ms | "
+                f"YOLO {predict_ms:6.2f} ms | "
+                f"CAM {camera_ms:6.2f} ms | "
+                f"POST {post_ms:6.2f} ms | "
                 f"{processing_fps_ema:6.2f} FPS | "
                 f"{len(detections):3d} objects | "
                 f"{len(pairs):2d} pairs",
@@ -1326,4 +1421,5 @@ if __name__ == "__main__":
 
     except Exception as exc:
         print(f"\n[ERROR] {exc}", file=sys.stderr)
+        traceback.print_exc()
         raise SystemExit(1)

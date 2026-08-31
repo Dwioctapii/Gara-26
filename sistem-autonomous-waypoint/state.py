@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 import copy
 import threading
 import time
@@ -33,6 +34,7 @@ class StateStore:
             "mission": {"current": 0, "total": 0, "waypoints": []},
             "servo": [0, 0, 0, 0],
             "detection": {"label": "STANDBY", "foto_atas_ready": False, "foto_bawah_ready": False},
+            "photos": {"atas": None, "bawah": None},
             "sensors": {"heartbeat": False, "eb": False, "pmb1": False, "pmb2": False, "manip": False, "thrusterPort": False, "thrusterStar": False, "ocs": False, "batPort": False, "batStar": False},
             "home": None, "lastCommand": None,
         }
@@ -63,6 +65,17 @@ class StateStore:
         gps, pos = out["gps"], out["position"]
         out.update(lat=gps["lat"], lon=gps["lon"], x=pos["x"], y=pos["y"], sog=gps["sog"], cog=gps["cog"], kompas=gps["cog"])
         return out
+
+    def set_photo(self, camera: str, jpeg: bytes) -> None:
+        if camera not in ("atas", "bawah"):
+            raise ValueError(f"kamera tidak dikenal: {camera}")
+        self.update({"photos": {camera: base64.b64encode(jpeg).decode("ascii")}})
+
+    def clear_photos(self) -> None:
+        self.update({
+            "photos": {"atas": None, "bawah": None},
+            "detection": {"label": "STANDBY", "foto_atas_ready": False, "foto_bawah_ready": False},
+        })
 
     def replace_mission(self, waypoints: list[dict]) -> None:
         """Tukar mission sekaligus; client tidak akan menerima daftar setengah jadi."""

@@ -1,0 +1,6 @@
+pymavlink>=2.4.49,<3
+websockets>=13,<17
+opencv-python>=4.8
+numpy>=1.24
+# Optional, needed only for YOLO object detection:
+# ultralytics>=8

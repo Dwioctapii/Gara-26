@@ -5,7 +5,6 @@ const SERVER_HOST = location.protocol === "file:" ? "192.168.0.4" : location.hos
 const WS_PORT = 8765;
 const HTTP_PORT = 8766;
 const RECONNECT_DELAY_MS = 3000;
-const PHOTO_POLL_MS = 1000;
 const MAP_CENTER = [-7.069219, 110.304997];
 const TRACKS = ["A", "B"];
 
@@ -14,7 +13,7 @@ const HTTP_SCHEME = location.protocol === "https:" ? "https" : "http";
 const WS_URL = `${WS_SCHEME}://${SERVER_HOST}:${WS_PORT}`;
 const HTTP_URL = `${HTTP_SCHEME}://${SERVER_HOST}:${HTTP_PORT}`;
 
-const state = {
+const createDefaultState = () => ({
     position: { x: 0, y: 0, z: 0 },
     orientation: { x: 0, y: 0, z: 0, w: 1 },
     linear: { x: 0, y: 0, z: 0 },
@@ -30,8 +29,12 @@ const state = {
     arm: "Disarmed",
     missionState: "IDLE",
     currentTrack: "A",
-    mission: { current: 0, total: 0, waypoints: [], revision: 0 }
-};
+    mission: { current: 0, total: 0, waypoints: [], revision: 0 },
+    photos: { atas: null, bawah: null }
+});
+
+let state = createDefaultState();
+const renderedPhotos = { atas: undefined, bawah: undefined };
 
 const SENSOR_IDS = [
     "heartbeat", "eb", "pmb1", "pmb2", "manip",
@@ -45,12 +48,10 @@ let reconnectTimer = null;
 let map = null;
 let boatMarker = null;
 let boatHeading = 0;
-let trajectoryLine = null;
 let missionRouteLine = null;
 let waypointMarkers = [];
 let activeWpCircle = null;
 let hasCenteredOnBoat = false;
-let lastTrailCoord = null;
 let lastRenderedWpRevision = -1;
 let lastRenderedCurrentWp = -1;
 
@@ -76,7 +77,9 @@ function merge(target, source) {
 }
 
 function applyTelemetry(data) {
-    merge(state, data);
+    const nextState = createDefaultState();
+    merge(nextState, data);
+    state = nextState;
     if (data.x !== undefined) state.position.x = number(data.x);
     if (data.y !== undefined) state.position.y = number(data.y);
     if (data.lat !== undefined) state.gps.lat = number(data.lat, null);
@@ -103,7 +106,7 @@ function connectWebSocket() {
     socket.onmessage = event => {
         try {
             const data = JSON.parse(event.data);
-            if (data.type !== "ack") applyTelemetry(data);
+            applyTelemetry(data);
         } catch (error) {
             console.error("Invalid WebSocket payload", error);
         }
@@ -121,33 +124,42 @@ function setConnection(connected) {
     footer.className = connected ? "blue" : "red";
 }
 
-function sendCommand(command) {
-    if (!socket || socket.readyState !== WebSocket.OPEN) {
-        console.warn("Command ditolak: WebSocket belum terhubung", command);
-        return;
+async function sendCommand(command) {
+    try {
+        const response = await fetch(`${HTTP_URL}/api/command`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ id: Date.now().toString(36), ...command })
+        });
+        const result = await response.json();
+        if (!response.ok || !result.ok) throw new Error(result.error || `HTTP ${response.status}`);
+        return result;
+    } catch (error) {
+        console.error("Command HTTP ditolak", error);
+        alert(`Command gagal: ${error.message}`);
+        return null;
     }
-    socket.send(JSON.stringify({ id: Date.now().toString(36), ...command }));
 }
 
-async function pollPhotos() {
-    try {
-        const response = await fetch(`${HTTP_URL}/status`, { cache: "no-store" });
-        if (!response.ok) throw new Error(`HTTP ${response.status}`);
-        const available = await response.json();
-        const stamp = Date.now();
-        if (available.atas) byId("atasCamImg").src = `${HTTP_URL}/atas.jpg?t=${stamp}`;
-        if (available.bawah) byId("bawahCamImg").src = `${HTTP_URL}/bawah.jpg?t=${stamp}`;
-        const footer = byId("photoFooter");
-        footer.textContent = available.atas || available.bawah ? "Camera Ready" : "Menunggu Target...";
-        footer.className = available.atas || available.bawah ? "blue" : "red";
-    } catch {
-        const footer = byId("photoFooter");
-        footer.textContent = "HTTP Offline";
-        footer.className = "red";
-    }
+function renderPhotos() {
+    const photos = state.photos && typeof state.photos === "object" ? state.photos : {};
+    ["atas", "bawah"].forEach(camera => {
+        const base64 = typeof photos[camera] === "string" ? photos[camera] : null;
+        if (renderedPhotos[camera] === base64) return;
+        renderedPhotos[camera] = base64;
+        byId(`${camera}CamImg`).src = base64
+            ? `data:image/jpeg;base64,${base64}`
+            : "camera-placeholder.png";
+    });
+
+    const ready = Boolean(photos.atas || photos.bawah);
+    const footer = byId("photoFooter");
+    footer.textContent = ready ? "Camera Ready" : "Menunggu Target...";
+    footer.className = ready ? "blue" : "red";
 }
 
 function render() {
+    renderPhotos();
     byId("xCoord").value = fixed(state.position.x, 3);
     byId("yCoord").value = fixed(state.position.y, 3);
     byId("missionStatusText").textContent = state.missionState;
@@ -248,8 +260,8 @@ function initComponents() {
         }
     });
 
-    // const recenterBtn = byId("recenterMapBtn");
-    // if (recenterBtn) {
+    const recenterBtn = byId("recenterMapBtn");
+    if (recenterBtn) {
         recenterBtn.onclick = () => {
             if (state.gps.lat != null && state.gps.lon != null) {
                 map.panTo([state.gps.lat, state.gps.lon]);
@@ -257,16 +269,12 @@ function initComponents() {
                 map.panTo(MAP_CENTER);
             }
         };
-    // }
+    }
 
     const clearTrailBtn = byId("clearTrailBtn");
     if (clearTrailBtn) {
-        clearTrailBtn.onclick = () => {
-            if (trajectoryLine) {
-                trajectoryLine.setLatLngs([]);
-                lastTrailCoord = null;
-            }
-        };
+        clearTrailBtn.textContent = "Reset Server History";
+        clearTrailBtn.onclick = () => sendCommand({ command: "clear_history" });
     }
 }
 
@@ -280,9 +288,6 @@ function initMap() {
 
     // Polyline untuk rute waypoint (Kuning putus-putus)
     missionRouteLine = RotaMap.polyline([], { color: '#f59e0b', weight: 3, dashArray: '6,6', opacity: 0.85 }).addTo(map);
-
-    // Polyline untuk jejak trajectory aktual kapal (Cyan terang)
-    trajectoryLine = RotaMap.polyline([], { color: '#06b6d4', weight: 3, opacity: 0.9 }).addTo(map);
 
     // Icon kapal ASV
     const icon = RotaMap.divIcon({
@@ -313,22 +318,6 @@ function updateBoatMarker() {
         hasCenteredOnBoat = true;
     }
 
-    // Rekam lintasan jejak kapal (trajectory)
-    if (trajectoryLine) {
-        if (!lastTrailCoord) {
-            lastTrailCoord = [lat, lon];
-            trajectoryLine.setLatLngs([[lat, lon]]);
-        } else {
-            // Hitung jarak minimum ~0.3m sebelum append titik baru
-            const dLat = (lat - lastTrailCoord[0]) * 111319.9;
-            const dLon = (lon - lastTrailCoord[1]) * 111319.9 * Math.cos(lat * Math.PI / 180);
-            const dist = Math.hypot(dLat, dLon);
-            if (dist >= 0.3) {
-                trajectoryLine.addLatLng([lat, lon]);
-                lastTrailCoord = [lat, lon];
-            }
-        }
-    }
 }
 
 function updateWaypoints() {
@@ -420,7 +409,5 @@ window.addEventListener("load", () => {
     initMap();
     render();
     connectWebSocket();
-    pollPhotos();
-    setInterval(pollPhotos, PHOTO_POLL_MS);
     setInterval(() => byId("timeFooter").textContent = new Date().toLocaleString(), 500);
 });

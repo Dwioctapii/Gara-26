@@ -1,0 +1,27 @@
+[gd_scene load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/ui/status_hud.gd" id="1_hud"]
+
+[node name="StatusHUD" type="PanelContainer"]
+anchors_preset = 15
+anchor_left = 1.0
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_left = -350.0
+grow_horizontal = 0
+grow_vertical = 2
+mouse_filter = 2
+script = ExtResource("1_hud")
+
+[node name="Margin" type="MarginContainer" parent="."]
+layout_mode = 2
+theme_override_constants/margin_left = 15
+theme_override_constants/margin_top = 18
+theme_override_constants/margin_right = 15
+theme_override_constants/margin_bottom = 18
+
+[node name="StatusLabel" type="Label" parent="Margin"]
+unique_name_in_owner = true
+layout_mode = 2
+theme_override_font_sizes/font_size = 14
+text = "ASV COURSE PLANNER\nLoading..."

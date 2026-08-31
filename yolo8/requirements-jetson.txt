@@ -1,0 +1,5 @@
+# PyTorch/torchvision TIDAK dicantumkan di sini. Pasang wheel/container yang
+# cocok dengan versi JetPack mengikuti dokumentasi NVIDIA terlebih dahulu.
+ultralytics>=8.3,<9
+websocket-client>=1.7,<2
+
