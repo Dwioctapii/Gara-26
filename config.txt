@@ -1,0 +1,28 @@
+hivemq_url=b786a44b5790491898b3c676180e7862.s1.eu.hivemq.cloud
+port=8883
+username=noxindocraft
+password=Zancraft1&
+ws_port=8884
+tls_mqtt=b786a44b5790491898b3c676180e7862.s1.eu.hivemq.cloud:8883
+tls_ws=b786a44b5790491898b3c676180e7862.s1.eu.hivemq.cloud:8884/mqtt
+
+
+jika local tidak merespon maka pakai cloud!
+
+
+local_ip_robot=192.168.0.4
+local_ws_port=8765
+local_http_port=8766
+
+
+/sistem_broadcast/state_dan_variabel
+
+/local_scope/[nama_komponen]/ 
+
+/local_scope/gui/*
+
+state.json // berisi state seperti settingan, atau kondisi apakah foto ada atau tidak, BUKAN DATA BROADCAST. WARNING JANGAN MEMPERURMIT, CUKUP CLASS YANG MEMANIPULASI JSON, dan LOCK file yang didalamnya ada sha!
+data_map_awal.json // 30x30 meter x dan y, A dan B
+
+
+http cuma sebagai, req seperti mengirim perintah bukan mengambil data!!
