@@ -1,58 +1,64 @@
 // ============================================================================
 // CONFIGURATION — ubah hanya bagian ini saat alamat server berubah.
 // ============================================================================
-const SERVER_HOST = location.protocol === "file:" ? "192.168.0.4" : location.hostname;
+const LOCAL_IP_ROBOT = "192.168.0.4";
+const DOMAIN_ROBOT   = "robot.neiaozora.my.id";   // tambahan fallback domain
+const SERVER_HOST = location.protocol === "file:" ? LOCAL_IP_ROBOT : location.hostname;
 const WS_PORT = 8765;
 const HTTP_PORT = 8766;
-const RECONNECT_DELAY_MS = 3000;
+const RECONNECT_DELAY_MS = 1000;
+const CONNECTION_TIMEOUT_MS = 2000;
+const DEBUG_ACTIVE = true;
+const MQTT_LIBRARY_URL = "https://unpkg.com/mqtt@5/dist/mqtt.min.js";
 const MAP_CENTER = [-7.069219, 110.304997];
 const TRACKS = ["A", "B"];
 
-const WS_SCHEME = location.protocol === "https:" ? "wss" : "ws";
-const HTTP_SCHEME = location.protocol === "https:" ? "https" : "http";
-const WS_URL = `${WS_SCHEME}://${SERVER_HOST}:${WS_PORT}`;
-const HTTP_URL = `${HTTP_SCHEME}://${SERVER_HOST}:${HTTP_PORT}`;
-
-const createDefaultState = () => ({
-    position: { x: 0, y: 0, z: 0 },
-    orientation: { x: 0, y: 0, z: 0, w: 1 },
-    linear: { x: 0, y: 0, z: 0 },
-    angular: { x: 0, y: 0, z: 0 },
-    battery1: { voltage: 0, current: 0, pressure: 0, capacity: 0, used: 0, temp: 0 },
-    thrusterPort: { voltage: 0, current: 0, capacity: 0, temp: 0 },
-    thrusterStar: { voltage: 0, current: 0, capacity: 0, temp: 0 },
-    gps: { sog: 0, cog: 0, lat: null, lon: null, satellites: 0, hdop: 99.9, fix: false, lastCalib: "-" },
-    heading: 0,
-    speed: 0,
-    depth: 0,
-    sensors: {},
-    arm: "Disarmed",
-    missionState: "IDLE",
-    currentTrack: "A",
-    mission: { current: 0, total: 0, waypoints: [], revision: 0 },
-    photos: { atas: null, bawah: null }
+const MQTT_CONFIG = Object.freeze({
+    url: "wss://b786a44b5790491898b3c676180e7862.s1.eu.hivemq.cloud:8884/mqtt",
+    username: "noxindocraft",
+    password: "Zancraft1&"
 });
 
-let state = createDefaultState();
-const renderedPhotos = { atas: undefined, bawah: undefined };
+const MQTT_TOPICS = Object.freeze({
+    photo: "/sistem_broadcast/foto",
+    state: "/sistem_broadcast/state_dan_variabel"   // tambahan untuk state fallback
+});
+
+const WS_SCHEME = location.protocol === "https:" ? "wss" : "ws";
+const HTTP_SCHEME = location.protocol === "https:" ? "https" : "http";
+// Daftar host: local IP → hostname → domain
+const SERVER_HOSTS = [...new Set([LOCAL_IP_ROBOT, SERVER_HOST, DOMAIN_ROBOT])];
+const WS_URLS = SERVER_HOSTS
+    .map(host => ({ host, url: `${WS_SCHEME}://${host}:${WS_PORT}` }));
+
+let state = null;
 
 const SENSOR_IDS = [
     "heartbeat", "eb", "pmb1", "pmb2", "manip",
     "thrusterPort", "thrusterStar", "ocs", "batPort", "batStar"
 ];
 
-let socket = null;
-let reconnectTimer = null;
+let dataSocket = null;
+let dataReconnectTimer = null;
+let dataConnectionTimer = null;
+let dataWsUrlIndex = 0;
+let activeServerHost = SERVER_HOST;
+const photoTransfers = new Map();
+let mqttClient = null;
+let mqttConnected = false;
+let mqttStarting = false;
+let mqttLibraryPromise = null;
 
 // Map & Visualization Layers
 let map = null;
 let boatMarker = null;
+let boatIcon = null;
 let boatHeading = 0;
 let missionRouteLine = null;
 let waypointMarkers = [];
 let activeWpCircle = null;
 let hasCenteredOnBoat = false;
-let lastRenderedWpRevision = -1;
+let lastRenderedWpSignature = "";
 let lastRenderedCurrentWp = -1;
 
 // Compass
@@ -64,102 +70,325 @@ const byId = id => document.getElementById(id);
 const number = (value, fallback = 0) => Number.isFinite(Number(value)) ? Number(value) : fallback;
 const fixed = (value, digits = 2) => number(value).toFixed(digits);
 
-function merge(target, source) {
-    if (!source || typeof source !== "object") return target;
-    Object.entries(source).forEach(([key, value]) => {
-        if (value && typeof value === "object" && !Array.isArray(value) && target[key] && typeof target[key] === "object") {
-            merge(target[key], value);
-        } else {
-            target[key] = value;
-        }
-    });
-    return target;
+function debug(channel, event, detail) {
+    if (!DEBUG_ACTIVE) return;
+    const time = new Date().toISOString();
+    console.debug(`[${time}][DEBUG][${channel}] ${event}`, detail ?? "");
+}
+
+function getHeadingDegrees() {
+    const yawRadians = number(state.orientation.z);
+    const yawDegrees = yawRadians * 180 / Math.PI;
+    return ((yawDegrees % 360) + 360) % 360;
 }
 
 function applyTelemetry(data) {
-    const nextState = createDefaultState();
-    merge(nextState, data);
-    state = nextState;
-    if (data.x !== undefined) state.position.x = number(data.x);
-    if (data.y !== undefined) state.position.y = number(data.y);
-    if (data.lat !== undefined) state.gps.lat = number(data.lat, null);
-    if (data.lon !== undefined) state.gps.lon = number(data.lon, null);
-    if (data.sog !== undefined) state.gps.sog = state.speed = number(data.sog);
-    if (data.cog !== undefined) state.gps.cog = number(data.cog);
-
-    // Patch Heading: Ambil heading eksplisit dari backend, atau hitung dari orientasi yaw (rad -> deg)
-    if (data.heading !== undefined && data.heading !== null) {
-        state.heading = number(data.heading);
-    } else if (data.kompas !== undefined && data.kompas !== null) {
-        state.heading = number(data.kompas);
-    } else if (state.orientation && state.orientation.z !== undefined) {
-        state.heading = ((number(state.orientation.z) * 180 / Math.PI) % 360 + 360) % 360;
-    }
-
+    if (!data || typeof data !== "object" || Array.isArray(data)) return;
+    debug("WS-DATA", "state_received", data);
+    state = data;
     render();
 }
 
-function connectWebSocket() {
-    clearTimeout(reconnectTimer);
-    socket = new WebSocket(WS_URL);
-    socket.onopen = () => setConnection(true);
-    socket.onmessage = event => {
+// ─── Fungsi untuk menerapkan state dari MQTT (fallback) ──────────────────
+function applyMqttState(data) {
+    if (!data || typeof data !== "object" || Array.isArray(data)) return;
+    // Hanya pakai jika WebSocket belum terhubung
+    if (dataSocket && dataSocket.readyState === WebSocket.OPEN) {
+        debug("MQTT-STATE", "ignored (WS active)");
+        return;
+    }
+    debug("MQTT-STATE", "applied as fallback", data);
+    state = data;
+    render();
+}
+
+function connectDataWebSocket() {
+    clearTimeout(dataReconnectTimer);
+    clearTimeout(dataConnectionTimer);
+
+    const target = WS_URLS[dataWsUrlIndex % WS_URLS.length];
+    dataWsUrlIndex += 1;
+
+    const newSocket = new WebSocket(target.url);
+    dataSocket = newSocket;
+    debug("WS-DATA", "connecting", target);
+    setConnection(false, `Menghubungkan ${target.host}`);
+
+    dataConnectionTimer = setTimeout(() => {
+        if (newSocket.readyState === WebSocket.CONNECTING) newSocket.close();
+    }, CONNECTION_TIMEOUT_MS);
+
+    newSocket.onopen = () => {
+        if (dataSocket !== newSocket) return;
+        clearTimeout(dataConnectionTimer);
+        activeServerHost = target.host;
+        setConnection(true, `Connected ${target.host}`);
+        const subscription = {
+            type: "subscribe",
+            component: "dashboard-data",
+            state: true,
+            camera: false,
+            photos: false,
+            state_hz: 30
+        };
+        debug("WS-DATA", "connected", target);
+        debug("WS-DATA", "subscription_sent", subscription);
+        newSocket.send(JSON.stringify(subscription));
+    };
+
+    newSocket.onmessage = event => {
+        if (dataSocket !== newSocket) return;
+        if (typeof event.data !== "string") {
+            debug("WS-DATA", "binary_ignored", { bytes: event.data.size });
+            return;
+        }
         try {
             const data = JSON.parse(event.data);
+            if (data.type) {
+                debug("WS-DATA", "control_received", data);
+                return;
+            }
             applyTelemetry(data);
         } catch (error) {
-            console.error("Invalid WebSocket payload", error);
+            debug("WS-DATA", "invalid_payload", { payload: event.data, error: error.message });
+            console.error("Payload data WebSocket tidak valid", error);
         }
     };
-    socket.onerror = () => socket.close();
-    socket.onclose = () => {
-        setConnection(false);
-        reconnectTimer = setTimeout(connectWebSocket, RECONNECT_DELAY_MS);
+
+    newSocket.onerror = event => {
+        debug("WS-DATA", "socket_error", event.type);
+        newSocket.close();
+    };
+    newSocket.onclose = event => {
+        if (dataSocket !== newSocket) return;
+        clearTimeout(dataConnectionTimer);
+        debug("WS-DATA", "disconnected", { code: event.code, reason: event.reason });
+        setConnection(false, "Mencari server data");
+        dataReconnectTimer = setTimeout(connectDataWebSocket, RECONNECT_DELAY_MS);
     };
 }
 
-function setConnection(connected) {
+function processPhotoMessage(message) {
+    const channel = "MQTT-PHOTO";
+    debug(channel, "message_received", photoDebugDetail(message));
+    if (message.type === "photo_status") {
+        const ready = Boolean(message.atas || message.bawah);
+        if (!message.atas) byId("atasCamImg").src = "camera-placeholder.png";
+        if (!message.bawah) byId("bawahCamImg").src = "camera-placeholder.png";
+        setPhotoConnection(ready, ready ? "Camera Ready" : "Menunggu Target...");
+        return;
+    }
+    if (message.type === "photo_start") {
+        if (!['atas', 'bawah'].includes(message.camera)) return;
+        const totalChunks = number(message.total_chunks);
+        if (totalChunks < 1 || totalChunks > 10000) return;
+        photoTransfers.set(message.transfer_id, {
+            camera: message.camera,
+            channel,
+            mimeType: message.mime_type || "image/jpeg",
+            totalBytes: number(message.total_bytes),
+            totalChars: number(message.total_chars),
+            sha256: message.sha256,
+            chunks: new Array(totalChunks)
+        });
+        debug(channel, "transfer_started", photoDebugDetail(message));
+        return;
+    }
+    if (message.type === "photo_chunk") {
+        const transfer = photoTransfers.get(message.transfer_id);
+        const index = number(message.index, -1);
+        if (!transfer || index < 0 || index >= transfer.chunks.length || typeof message.data !== "string") return;
+        transfer.chunks[index] = message.data;
+        debug(transfer.channel, "chunk_stored", photoDebugDetail(message));
+        return;
+    }
+    if (message.type === "photo_end") {
+        finishPhotoTransfer(message.transfer_id);
+        return;
+    }
+    debug(channel, "unknown_message", photoDebugDetail(message));
+}
+
+function loadMqttLibrary() {
+    if (window.mqtt) return Promise.resolve(window.mqtt);
+    if (mqttLibraryPromise) return mqttLibraryPromise;
+
+    mqttLibraryPromise = new Promise((resolve, reject) => {
+        const script = document.createElement("script");
+        const timeout = setTimeout(() => reject(new Error("Waktu muat MQTT.js habis")), 10000);
+        script.src = MQTT_LIBRARY_URL;
+        script.onload = () => {
+            clearTimeout(timeout);
+            window.mqtt ? resolve(window.mqtt) : reject(new Error("MQTT.js tidak tersedia"));
+        };
+        script.onerror = () => {
+            clearTimeout(timeout);
+            reject(new Error("Gagal memuat MQTT.js"));
+        };
+        document.head.appendChild(script);
+    });
+    return mqttLibraryPromise;
+}
+
+async function connectMqttPhoto() {
+    if (mqttClient || mqttStarting) return;
+    mqttStarting = true;
+    debug("MQTT", "connecting", { url: MQTT_CONFIG.url });
+
+    try {
+        const mqtt = await loadMqttLibrary();
+        const randomId = window.crypto && window.crypto.randomUUID
+            ? window.crypto.randomUUID().slice(0, 8)
+            : Math.random().toString(16).slice(2, 10);
+        mqttClient = mqtt.connect(MQTT_CONFIG.url, {
+            username: MQTT_CONFIG.username,
+            password: MQTT_CONFIG.password,
+            clientId: `dashboard-${randomId}`,
+            protocolVersion: 4,
+            clean: true,
+            connectTimeout: 5000,
+            reconnectPeriod: 3000,
+            keepalive: 30
+        });
+
+        mqttClient.on("connect", () => {
+            mqttConnected = true;
+            debug("MQTT", "connected", { url: MQTT_CONFIG.url });
+            // Subscribe ke kedua topik
+            mqttClient.subscribe(MQTT_TOPICS.photo, { qos: 0 }, err => {
+                if (err) debug("MQTT", "photo_sub_failed", err);
+                else debug("MQTT", "subscribed_photo");
+            });
+            mqttClient.subscribe(MQTT_TOPICS.state, { qos: 0 }, err => {
+                if (err) debug("MQTT", "state_sub_failed", err);
+                else debug("MQTT", "subscribed_state");
+            });
+            setPhotoConnection(true, "Cloud HiveMQ");
+        });
+
+        mqttClient.on("message", (topic, payload) => {
+            try {
+                const message = JSON.parse(payload.toString());
+                debug("MQTT", "message_received", { topic, bytes: payload.length });
+
+                if (topic === MQTT_TOPICS.photo) {
+                    processPhotoMessage(message);
+                } else if (topic === MQTT_TOPICS.state) {
+                    applyMqttState(message);
+                }
+            } catch (error) {
+                debug("MQTT", "invalid_payload", { topic, error: error.message });
+            }
+        });
+
+        mqttClient.on("reconnect", () => debug("MQTT", "reconnecting"));
+        mqttClient.on("offline", () => {
+            mqttConnected = false;
+            debug("MQTT", "offline");
+        });
+        mqttClient.on("close", () => {
+            mqttConnected = false;
+            debug("MQTT", "disconnected");
+        });
+        mqttClient.on("error", error => debug("MQTT", "error", { error: error.message }));
+    } catch (error) {
+        mqttClient = null;
+        mqttLibraryPromise = null;
+        debug("MQTT", "startup_failed", { error: error.message });
+    } finally {
+        mqttStarting = false;
+    }
+}
+
+function finishPhotoTransfer(transferId) {
+    const transfer = photoTransfers.get(transferId);
+    if (!transfer) return;
+    if (transfer.chunks.some(chunk => typeof chunk !== "string")) {
+        debug(transfer.channel, "transfer_incomplete", { transferId });
+        photoTransfers.delete(transferId);
+        return;
+    }
+
+    const base64 = transfer.chunks.join("");
+    if (base64.length !== transfer.totalChars) {
+        debug(transfer.channel, "size_mismatch", { transferId, expected: transfer.totalChars, received: base64.length });
+        photoTransfers.delete(transferId);
+        return;
+    }
+
+    const image = byId(`${transfer.camera}CamImg`);
+    image.src = `data:${transfer.mimeType};base64,${base64}`;
+    image.alt = `Foto kamera ${transfer.camera}`;
+    setPhotoConnection(true, "Camera Ready");
+    debug(transfer.channel, "image_rendered", {
+        camera: transfer.camera,
+        transferId,
+        bytes: transfer.totalBytes,
+        characters: base64.length,
+        sha256: transfer.sha256
+    });
+    photoTransfers.delete(transferId);
+}
+
+function photoDebugDetail(message) {
+    if (message.type !== "photo_chunk") return message;
+    return {
+        type: message.type,
+        camera: message.camera,
+        transfer_id: message.transfer_id,
+        index: message.index,
+        total_chunks: message.total_chunks,
+        characters: typeof message.data === "string" ? message.data.length : 0
+    };
+}
+
+function setConnection(connected, message) {
     const footer = byId("connFooter");
-    footer.textContent = connected ? "Connected" : "Disconnected";
+    footer.textContent = message || (connected ? "Connected" : "Disconnected");
+    footer.className = connected ? "blue" : "red";
+}
+
+function setPhotoConnection(connected, message) {
+    const footer = byId("photoFooter");
+    footer.textContent = message;
     footer.className = connected ? "blue" : "red";
 }
 
 async function sendCommand(command) {
+    const httpUrl = `${HTTP_SCHEME}://${activeServerHost}:${HTTP_PORT}`;
+    const request = { id: Date.now().toString(36), ...command };
+
     try {
-        const response = await fetch(`${HTTP_URL}/api/command`, {
+        debug("HTTP-COMMAND", "request_sent", { url: `${httpUrl}/api/command`, data: request });
+        const response = await fetch(`${httpUrl}/api/command`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ id: Date.now().toString(36), ...command })
+            body: JSON.stringify(request)
         });
         const result = await response.json();
-        if (!response.ok || !result.ok) throw new Error(result.error || `HTTP ${response.status}`);
+        debug("HTTP-COMMAND", "response_received", { status: response.status, data: result });
+        if (!response.ok || !result.ok) {
+            const error = new Error(result.error || `HTTP ${response.status}`);
+            error.responsHttp = true;
+            throw error;
+        }
         return result;
     } catch (error) {
-        console.error("Command HTTP ditolak", error);
-        alert(`Command gagal: ${error.message}`);
+        debug("HTTP-COMMAND", "request_failed", { error: error.message, data: request });
+        if (error.responsHttp) {
+            console.error("Command HTTP ditolak server", error);
+            alert(`Command ditolak server: ${error.message}`);
+            return null;
+        }
+        console.error("Command HTTP gagal", error);
+        alert(`Command HTTP gagal: ${error.message}`);
         return null;
     }
 }
 
-function renderPhotos() {
-    const photos = state.photos && typeof state.photos === "object" ? state.photos : {};
-    ["atas", "bawah"].forEach(camera => {
-        const base64 = typeof photos[camera] === "string" ? photos[camera] : null;
-        if (renderedPhotos[camera] === base64) return;
-        renderedPhotos[camera] = base64;
-        byId(`${camera}CamImg`).src = base64
-            ? `data:image/jpeg;base64,${base64}`
-            : "camera-placeholder.png";
-    });
-
-    const ready = Boolean(photos.atas || photos.bawah);
-    const footer = byId("photoFooter");
-    footer.textContent = ready ? "Camera Ready" : "Menunggu Target...";
-    footer.className = ready ? "blue" : "red";
-}
-
 function render() {
-    renderPhotos();
+    const heading = getHeadingDegrees();
+
     byId("xCoord").value = fixed(state.position.x, 3);
     byId("yCoord").value = fixed(state.position.y, 3);
     byId("missionStatusText").textContent = state.missionState;
@@ -192,9 +421,9 @@ function render() {
         }
     });
 
-    updateCompass(state.heading);
-    renderDataBoxes();
-    updateBoatMarker();
+    updateCompass(heading);
+    renderDataBoxes(heading);
+    updateBoatMarker(heading);
     updateWaypoints();
 }
 
@@ -206,7 +435,6 @@ function updateCompass(rawDegrees) {
         compassReady = true;
         compassContinuousAngle = normalized;
     } else {
-        // Shortest signed difference prevents 359° -> 0° from rotating backward.
         const delta = ((normalized - compassLastNormalized + 540) % 360) - 180;
         compassContinuousAngle += delta;
     }
@@ -218,7 +446,7 @@ function updateCompass(rawDegrees) {
     if (val) val.textContent = `${normalized.toFixed(1)}°`;
 }
 
-function renderDataBoxes() {
+function renderDataBoxes(heading) {
     const p = state.position, o = state.orientation, l = state.linear, a = state.angular;
     byId("posBox").innerHTML = `<b>Position</b><br>X: ${fixed(p.x,3)}<br>Y: ${fixed(p.y,3)}<br>Z: ${fixed(p.z,3)}`;
     byId("oriBox").innerHTML = `<b>Orientation</b><br>X: ${fixed(o.x,3)}<br>Y: ${fixed(o.y,3)}<br>Z: ${fixed(o.z,3)}<br>W: ${fixed(o.w,3)}`;
@@ -229,14 +457,14 @@ function renderDataBoxes() {
     byId("bat1Box").innerHTML = `<b>Battery</b><br>Voltage: ${fixed(b.voltage,1)} V<br>Current: ${fixed(b.current,1)} A<br>Capacity: ${number(b.capacity)} mAh<br>Used: ${fixed(b.used,0)} mAh<br>Temp: ${number(b.temp)}°C`;
 
     const sogKts = state.gps.sog * 1.94384;
-    byId("sogCogBox").innerHTML = `<b>SOG & COG & Heading</b><br>SOG: ${fixed(state.gps.sog,2)} m/s (${fixed(sogKts,2)} kts)<br>COG: ${fixed(state.gps.cog,1)}°<br>Heading: ${fixed(state.heading,1)}°`;
+    byId("sogCogBox").innerHTML = `<b>SOG & COG & Heading</b><br>SOG: ${fixed(state.gps.sog,2)} m/s (${fixed(sogKts,2)} kts)<br>COG: ${fixed(state.gps.cog,1)}°<br>Heading: ${fixed(heading,1)}°`;
 
     byId("thrusterPortBox").innerHTML = `<b>Thrusters (Port)</b><br>Voltage: ${fixed(port.voltage,1)}<br>Current: ${fixed(port.current,1)}<br>Capacity: ${number(port.capacity)}mAh<br>Temperature: ${number(port.temp)}`;
     byId("thrusterStarBox").innerHTML = `<b>Thrusters (Star)</b><br>Voltage: ${fixed(star.voltage,1)}<br>Current: ${fixed(star.current,1)}<br>Capacity: ${number(star.capacity)}mAh<br>Temperature: ${number(star.temp)}`;
 }
 
 function initComponents() {
-    byId("sensorList").innerHTML = SENSOR_IDS.map(id => `<div class="status-item"><span>${id.toUpperCase()}</span><div id="sensor_${id}" class="status-box bad">Not OK</div></div>`).join("");
+    byId("sensorList").innerHTML = SENSOR_IDS.map(id => `<div class="status-item"><span>${id.toUpperCase()}</span><div id="sensor_${id}" class="status-box">-</div></div>`).join("");
     byId("dataBoxesGrid1").innerHTML = ["posBox","oriBox","linBox","angBox"].map(id => `<div class="black-box" id="${id}"></div>`).join("");
     byId("dataBoxesGrid2").innerHTML = ["bat1Box","sogCogBox","thrusterPortBox","thrusterStarBox"].map(id => `<div class="black-box" id="${id}"></div>`).join("");
 
@@ -255,7 +483,7 @@ function initComponents() {
 
     document.querySelectorAll(".track-btn").forEach(button => button.onclick = () => {
         const track = button.dataset.track;
-        if (TRACKS.includes(track) && track !== state.currentTrack && confirm(`Pindah ke Lintasan ${track}?`)) {
+        if (state && TRACKS.includes(track) && track !== state.currentTrack && confirm(`Pindah ke Lintasan ${track}?`)) {
             sendCommand({ command: "set_track", track });
         }
     });
@@ -263,7 +491,7 @@ function initComponents() {
     const recenterBtn = byId("recenterMapBtn");
     if (recenterBtn) {
         recenterBtn.onclick = () => {
-            if (state.gps.lat != null && state.gps.lon != null) {
+            if (state && state.gps.lat != null && state.gps.lon != null) {
                 map.panTo([state.gps.lat, state.gps.lon]);
             } else {
                 map.panTo(MAP_CENTER);
@@ -286,21 +514,18 @@ function initMap() {
     map = RotaMap.map("map", { center: MAP_CENTER, zoom: 19, maxZoom: 22, minZoom: 14 });
     RotaMap.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png").addTo(map);
 
-    // Polyline untuk rute waypoint (Kuning putus-putus)
     missionRouteLine = RotaMap.polyline([], { color: '#f59e0b', weight: 3, dashArray: '6,6', opacity: 0.85 }).addTo(map);
 
-    // Icon kapal ASV
-    const icon = RotaMap.divIcon({
+    boatIcon = RotaMap.divIcon({
         html: '<div style="font-size:26px;line-height:30px;text-align:center;filter:drop-shadow(0 2px 5px rgba(0,0,0,0.6));">⛵</div>',
         iconSize: [30, 30],
         iconAnchor: [15, 15]
     });
-    boatMarker = RotaMap.marker(MAP_CENTER, { icon, rotation: 0 }).addTo(map);
     new ResizeObserver(() => map.invalidateSize()).observe(byId("mapContainer"));
 }
 
-function updateBoatMarker() {
-    if (!map || !boatMarker) return;
+function updateBoatMarker(heading) {
+    if (!map) return;
 
     const hasFix = Boolean(state.gps.fix) && state.gps.lat != null && state.gps.lon != null;
     if (!hasFix) return;
@@ -308,16 +533,17 @@ function updateBoatMarker() {
     const lat = state.gps.lat;
     const lon = state.gps.lon;
 
+    if (!boatMarker) {
+        boatMarker = RotaMap.marker([lat, lon], { icon: boatIcon, rotation: 0 }).addTo(map);
+    }
     boatMarker.setLatLng([lat, lon]);
-    boatHeading = state.heading;
+    boatHeading = heading;
     boatMarker.setRotation(boatHeading);
 
-    // Auto center ke posisi kapal saat pertama kali fix
     if (!hasCenteredOnBoat) {
         map.panTo([lat, lon]);
         hasCenteredOnBoat = true;
     }
-
 }
 
 function updateWaypoints() {
@@ -325,15 +551,14 @@ function updateWaypoints() {
 
     const wpList = (state.mission && Array.isArray(state.mission.waypoints)) ? state.mission.waypoints : [];
     const currentSeq = number(state.mission.current, 0);
-    const revision = number(state.mission.revision, 0);
+    const signature = JSON.stringify(wpList.map(wp => [wp.seq, wp.lat, wp.lon, wp.param2]));
 
-    const shouldRecreate = (revision !== lastRenderedWpRevision) || (wpList.length !== waypointMarkers.length);
+    const shouldRecreate = signature !== lastRenderedWpSignature;
     const activeChanged = (currentSeq !== lastRenderedCurrentWp);
 
     if (!shouldRecreate && !activeChanged) return;
 
     if (shouldRecreate) {
-        // Hapus marker WP yang lama
         waypointMarkers.forEach(item => {
             if (item.marker && typeof item.marker.remove === "function") item.marker.remove();
         });
@@ -343,6 +568,7 @@ function updateWaypoints() {
         wpList.forEach((wp, idx) => {
             if (wp.lat == null || wp.lon == null) return;
             const pt = [wp.lat, wp.lon];
+            const radius = number(wp.param2) > 0 ? number(wp.param2) : 1.5;
             routePts.push(pt);
 
             const isHome = (idx === 0 || wp.seq === 0);
@@ -357,22 +583,21 @@ function updateWaypoints() {
             });
 
             const marker = RotaMap.marker(pt, { icon, keepUpright: true }).addTo(map);
-            marker.bindPopup(`<b>Waypoint #${wp.seq !== undefined ? wp.seq : idx}</b><br>Lat: ${fixed(wp.lat, 6)}<br>Lon: ${fixed(wp.lon, 6)}<br>Radius: ${fixed(wp.acceptanceRadius || 1.5, 1)} m`);
+            marker.bindPopup(`<b>Waypoint #${wp.seq !== undefined ? wp.seq : idx}</b><br>Lat: ${fixed(wp.lat, 6)}<br>Lon: ${fixed(wp.lon, 6)}<br>Radius: ${fixed(radius, 1)} m`);
             waypointMarkers.push({
                 marker,
                 seq: wp.seq !== undefined ? wp.seq : idx,
                 lat: wp.lat,
                 lon: wp.lon,
-                radius: wp.acceptanceRadius || 1.5
+                radius
             });
         });
 
         if (missionRouteLine) {
             missionRouteLine.setLatLngs(routePts);
         }
-        lastRenderedWpRevision = revision;
+        lastRenderedWpSignature = signature;
     } else if (activeChanged) {
-        // Cukup perbarui styling active class pada badge
         waypointMarkers.forEach(item => {
             const isActive = (item.seq === currentSeq);
             const isHome = (item.seq === 0);
@@ -383,7 +608,6 @@ function updateWaypoints() {
         });
     }
 
-    // Update lingkaran Acceptance Radius untuk target waypoint aktif
     const activeWp = waypointMarkers.find(w => w.seq === currentSeq);
     if (activeWp) {
         if (!activeWpCircle) {
@@ -407,7 +631,7 @@ function updateWaypoints() {
 window.addEventListener("load", () => {
     initComponents();
     initMap();
-    render();
-    connectWebSocket();
-    setInterval(() => byId("timeFooter").textContent = new Date().toLocaleString(), 500);
+    connectDataWebSocket();
+    connectMqttPhoto();
+    setInterval(() => byId("timeFooter").textContent = new Date().toLocaleString(), 100);
 });

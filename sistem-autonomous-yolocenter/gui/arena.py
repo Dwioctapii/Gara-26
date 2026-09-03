@@ -88,30 +88,32 @@ class ArenaWindow:
 
 
 def run(stop_event):
-    root = tk.Tk()
-    window = ArenaWindow(root)
-    websocket = GUIWebSocket("arena")
-    websocket.start()
-    last_version = -1
+    # --- GUI Arena Trajectory dimatikan (dikomentari) ---
+    # root = tk.Tk()
+    # window = ArenaWindow(root)
+    # websocket = GUIWebSocket("arena")
+    # websocket.start()
+    # last_version = -1
 
-    def refresh():
-        nonlocal last_version
-        if stop_event.is_set():
-            websocket.stop()
-            root.destroy()
-            return
-        state, _frame, status, version, _frame_version = websocket.snapshot()
-        if version != last_version and state:
-            window.update(state)
-            root.title(f"ASV Arena - {status}")
-            last_version = version
-        root.after(50, refresh)
+    # def refresh():
+    #     nonlocal last_version
+    #     if stop_event.is_set():
+    #         websocket.stop()
+    #         root.destroy()
+    #         return
+    #     state, _frame, status, version, _frame_version = websocket.snapshot()
+    #     if version != last_version and state:
+    #         window.update(state)
+    #         root.title(f"ASV Arena - {status}")
+    #         last_version = version
+    #     root.after(50, refresh)
 
-    def close():
-        stop_event.set()
-        websocket.stop()
-        root.destroy()
+    # def close():
+    #     stop_event.set()
+    #     websocket.stop()
+    #     root.destroy()
 
-    root.protocol("WM_DELETE_WINDOW", close)
-    refresh()
-    root.mainloop()
+    # root.protocol("WM_DELETE_WINDOW", close)
+    # refresh()
+    # root.mainloop()
+    pass

@@ -15,7 +15,7 @@ def run_dashboard(_store=None, _photo_dir=None):
     processes = [
         context.Process(target=run_debug, args=(stop_event,), name="gui-debug"),
         context.Process(target=run_controls, args=(stop_event,), name="gui-controls"),
-        context.Process(target=run_arena, args=(stop_event,), name="gui-arena"),
+        # context.Process(target=run_arena, args=(stop_event,), name="gui-arena"),
         context.Process(target=run_camera, args=(stop_event,), name="gui-camera"),
     ]
     for process in processes:

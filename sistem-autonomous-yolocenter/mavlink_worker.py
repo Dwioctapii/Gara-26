@@ -1,5 +1,7 @@
 """Pembaca MAVLink mandiri: telemetri + unduh mission Pixhawk berkala."""
 
+from __future__ import annotations
+
 import math
 import threading
 import time

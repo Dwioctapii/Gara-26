@@ -73,11 +73,16 @@ SERVO_DEADBAND = float(os.getenv("ASV_SERVO_DEADBAND", "5.0"))
 # Area minimum bounding box (px²) agar buoy merah dianggap sebagai target aktif.
 # Resolusi kamera 320×240 → total 76 800 px². Default 500 px² menangkap buoy
 # yang sudah cukup dekat tanpa terlalu sensitif terhadap objek jauh.
-RED_BUOY_MIN_AREA   = int(os.getenv("ASV_RED_MIN_AREA",   "500"))
-GREEN_BUOY_MIN_AREA = int(os.getenv("ASV_GREEN_MIN_AREA", "500"))
+RED_BUOY_MIN_AREA   = int(os.getenv("ASV_RED_MIN_AREA",   "200"))
+GREEN_BUOY_MIN_AREA = int(os.getenv("ASV_GREEN_MIN_AREA", "200"))
 
 # PWM servo saat mode SEARCH (hanya satu buoy terdeteksi):
 #   - Hanya buoyred  terdeteksi → belok KANAN (nilai > SERVO_NEUTRAL)
 #   - Hanya buoygreen terdeteksi → belok KIRI  (nilai < SERVO_NEUTRAL)
 # Offset dihitung dari SERVO_NEUTRAL (default ±200 µs).
 SERVO_SEARCH_OFFSET = int(os.getenv("ASV_SERVO_SEARCH_OFFSET", "200"))
+
+# ─── Catatan ──────────────────────────────────────────────────────────────────
+# File config.txt TIDAK digunakan lagi untuk kredensial MQTT.
+# Kredensial MQTT cloud di-hardcode di mqtt_worker.py.
+# Domain robot.neiaozora.my.id ditangani di sisi client (dashboard.js).

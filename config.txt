@@ -16,7 +16,10 @@ local_http_port=8766
 
 
 /sistem_broadcast/state_dan_variabel
+/sistem_broadcast/foto // you go fucking serialize this into base64 and multiple chunks. just keep fucking broadcast the cleint is just following what it received!
 
+
+UNTUK FUCKING LOCAL!, QOS ITU 0 KARENA BUTUH LATENCY RENDAH
 /local_scope/[nama_komponen]/ 
 
 /local_scope/gui/*

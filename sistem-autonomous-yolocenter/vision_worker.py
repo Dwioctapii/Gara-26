@@ -279,7 +279,7 @@ class VisionWorker:
                 model      = YOLO(str(engine_path), task='detect')
                 model_type = "TensorRT (.engine) — GPU"
                 print(f"[VISION] ✓ Model {model_type} berhasil dimuat: {engine_path.name}")
-                print(f"[VISION]   → Inferensi berjalan di GPU (device=0), imgsz=320")
+                print(f"[VISION]   → Inferensi berjalan di GPU (device=0), imgsz=640")
             elif pt_path.exists():
                 model      = YOLO(str(pt_path))
                 model_type = "PyTorch (.pt) — CPU/GPU"
@@ -290,7 +290,7 @@ class VisionWorker:
         if not model:
             print("[VISION] ✗ YOLO/model tidak tersedia; kamera tetap berjalan tanpa deteksi.")
         else:
-            print(f"[VISION] Pipeline siap: ThreadedCamera × 2 | YOLO {model_type} | imgsz=320")
+            print(f"[VISION] Pipeline siap: ThreadedCamera × 2 | YOLO {model_type} | imgsz=640")
 
         # ── Inisialisasi ThreadedCamera (non-blocking, masing-masing thread sendiri) ──
         # ThreadedCamera.start() menunggu frame pertama siap (maks 3 detik)
@@ -377,8 +377,9 @@ class VisionWorker:
         self._sync_pid_config()
 
         snapshot = self.store.snapshot()["detection"]
-        # Optimasi: paksa gunakan GPU (device=0) dan ukuran gambar asli (256 atau 320) agar tidak di-resize ke 640
-        results  = model(frame_atas, verbose=False, conf=0.5, device=0, imgsz=320)
+        # Optimasi: paksa gunakan GPU (device=0) dan ukuran sesuai file .engine (640)
+        # Tambahan agnostic_nms=True: Mencegah buoy dan box terdeteksi bertumpuk di 1 objek fisik
+        results  = model(frame_atas, verbose=False, conf=0.5, device=0, imgsz=640, agnostic_nms=True)
         
         # Optimasi CPU: Jangan gunakan results[0].plot() bawaan YOLO yang berat. 
         # Kita gambar (copy) frame asli, lalu gambar kotak manual.
@@ -386,6 +387,9 @@ class VisionWorker:
 
         red_candidates   = []
         green_candidates = []
+        # Tracking area terbesar boxgreen/boxblue per frame (untuk status GUI)
+        best_area_green = 0
+        best_area_blue  = 0
 
         for result in results:
             for box in result.boxes:
@@ -395,6 +399,14 @@ class VisionWorker:
                 w         = box.xywh[0][2].item()
                 h         = box.xywh[0][3].item()
                 bbox_area = w * h
+
+                # ── Filter Aspek Rasio untuk membedakan Box dan Buoy ─────────
+                # Jika objek terdeteksi sebagai "box" tapi bentuk bounding box-nya
+                # sangat jangkung/berdiri (tinggi jauh lebih besar dari lebar),
+                # kemungkinan besar itu adalah buoy yang salah klasifikasi.
+                if ("blue" in name or "green" in name) and not "buoy" in name:
+                    if h > w * 1.2:
+                        continue  # Abaikan salah deteksi ini (anggap bukan box)
 
                 # --- Gambar Bounding Box Ringan (Manual) ---
                 x1 = int(cx - w/2)
@@ -409,21 +421,31 @@ class VisionWorker:
                 # -------------------------------------------
 
                 # ── Misi foto: boxblue & boxgreen ────────────────────────────
-                if "blue" in name and not snapshot["foto_bawah_ready"]:
-                    if bbox_area >= 5000:
+                if "blue" in name and not "buoy" in name:
+                    best_area_blue = max(best_area_blue, int(bbox_area))
+                    if not snapshot["foto_bawah_ready"] and bbox_area >= 5000:
                         img_to_save = frame_bawah if frame_bawah is not None else frame_atas
                         cv2.imwrite(str(self.photo_dir / "bawah.jpg"), img_to_save)
                         self.store.update({
-                            "detection": {"label": "BOXBLUE (LOCKED & SAVED)", "foto_bawah_ready": True}
+                            "detection": {
+                                "label": "BOXBLUE (LOCKED & SAVED)",
+                                "foto_bawah_ready": True,
+                                "area_blue": int(bbox_area),
+                            }
                         })
                         self.store.set_live_frame(annotated_frame)
                         return
 
-                if "green" in name and not snapshot["foto_atas_ready"]:
-                    if bbox_area >= 5000:
+                if "green" in name and not "buoy" in name:
+                    best_area_green = max(best_area_green, int(bbox_area))
+                    if not snapshot["foto_atas_ready"] and bbox_area >= 5000:
                         cv2.imwrite(str(self.photo_dir / "atas.jpg"), frame_atas)
                         self.store.update({
-                            "detection": {"label": "BOXGREEN (LOCKED & SAVED)", "foto_atas_ready": True}
+                            "detection": {
+                                "label": "BOXGREEN (LOCKED & SAVED)",
+                                "foto_atas_ready": True,
+                                "area_green": int(bbox_area),
+                            }
                         })
                         self.store.set_live_frame(annotated_frame)
                         return
@@ -435,6 +457,17 @@ class VisionWorker:
                 # ── Kumpulkan kandidat buoy hijau ────────────────────────────
                 if "buoygreen" in name and bbox_area >= self.green_min_area:
                     green_candidates.append((bbox_area, cx, cy))
+
+        # ── Kirim area live ke store (hanya jika ada deteksi, agar angka terlihat) ──
+        det_patch = {}
+        if best_area_green > 0:
+            det_patch["area_green"] = best_area_green
+            det_patch["label"]      = f"BOXGREEN terdeteksi ({best_area_green:,} px²)"
+        if best_area_blue > 0:
+            det_patch["area_blue"]  = best_area_blue
+            det_patch["label"]      = f"BOXBLUE terdeteksi ({best_area_blue:,} px²)"
+        if det_patch and not snapshot["foto_atas_ready"] and not snapshot["foto_bawah_ready"]:
+            self.store.update({"detection": det_patch})
 
         # ── Pilih buoy terdekat (bbox area terbesar) dari masing-masing warna ──
         best_red   = max(red_candidates,   key=lambda r: r[0]) if red_candidates   else None
