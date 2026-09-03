@@ -17,11 +17,11 @@
   "rewrites": [
     {
       "source": "/",
-      "destination": "/index.html"
+      "destination": "/client/index.html"
     },
     {
       "source": "/:path*",
-      "destination": "/:path*"
+      "destination": "/client/:path*"
     }
   ]
 }
