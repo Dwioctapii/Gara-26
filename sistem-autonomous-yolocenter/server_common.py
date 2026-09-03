@@ -36,17 +36,15 @@ def _read_photo(path):
     return content, after_signature
 
 
-def _prepare_photo_transfer(camera: str, path, previous_signature):
+def _prepare_photo_transfer(camera: str, path, previous_signature=None):
+    """Baca foto dan siapkan chunk, abaikan signature (selalu kirim jika ada)."""
     result = _read_photo(path)
     if not result:
         return None
     content, signature = result
-    if signature == previous_signature:
-        return None
-
+    # Signature tidak dipakai lagi – selalu kirim
     encoded = base64.b64encode(content).decode("ascii")
-    chunks = [encoded[index:index + PHOTO_CHUNK_CHARS]
-              for index in range(0, len(encoded), PHOTO_CHUNK_CHARS)]
+    chunks = [encoded[i:i+PHOTO_CHUNK_CHARS] for i in range(0, len(encoded), PHOTO_CHUNK_CHARS)]
     digest = hashlib.sha256(content).hexdigest()
     metadata = {
         "camera": camera,
@@ -58,7 +56,6 @@ def _prepare_photo_transfer(camera: str, path, previous_signature):
         "sha256": digest,
     }
     return metadata, chunks, signature
-
 
 def _encode_live_frame(store, quality: int, previous_sequence: int) -> tuple[bytes | None, int]:
     """Ambil satu frame konsisten dan kompres di worker thread."""

@@ -21,15 +21,19 @@ const MQTT_CONFIG = Object.freeze({
 
 const MQTT_TOPICS = Object.freeze({
     photo: "/sistem_broadcast/foto",
-    state: "/sistem_broadcast/state_dan_variabel"   // tambahan untuk state fallback
+    state: "/sistem_broadcast/state_dan_variabel"
 });
 
 const WS_SCHEME = location.protocol === "https:" ? "wss" : "ws";
 const HTTP_SCHEME = location.protocol === "https:" ? "https" : "http";
+
 // Daftar host: local IP → hostname → domain
 const SERVER_HOSTS = [...new Set([LOCAL_IP_ROBOT, SERVER_HOST, DOMAIN_ROBOT])];
 const WS_URLS = SERVER_HOSTS
     .map(host => ({ host, url: `${WS_SCHEME}://${host}:${WS_PORT}` }));
+
+// Base URL untuk HTTP (digunakan untuk foto)
+let HTTP_BASE_URL = "";
 
 let state = null;
 
@@ -43,7 +47,6 @@ let dataReconnectTimer = null;
 let dataConnectionTimer = null;
 let dataWsUrlIndex = 0;
 let activeServerHost = SERVER_HOST;
-const photoTransfers = new Map();
 let mqttClient = null;
 let mqttConnected = false;
 let mqttStarting = false;
@@ -92,7 +95,6 @@ function applyTelemetry(data) {
 // ─── Fungsi untuk menerapkan state dari MQTT (fallback) ──────────────────
 function applyMqttState(data) {
     if (!data || typeof data !== "object" || Array.isArray(data)) return;
-    // Hanya pakai jika WebSocket belum terhubung
     if (dataSocket && dataSocket.readyState === WebSocket.OPEN) {
         debug("MQTT-STATE", "ignored (WS active)");
         return;
@@ -100,6 +102,31 @@ function applyMqttState(data) {
     debug("MQTT-STATE", "applied as fallback", data);
     state = data;
     render();
+}
+
+// ─── HTTP Photo Loader ─────────────────────────────────────────────────────
+function updatePhotoElement(camera) {
+    const img = byId(`${camera}CamImg`);
+    if (!img) return;
+
+    const readyKey = `foto_${camera}_ready`;
+    const isReady = state && state.detection && state.detection[readyKey] === true;
+
+    if (isReady && HTTP_BASE_URL) {
+        // Tambahkan timestamp untuk mencegah cache
+        const url = `${HTTP_BASE_URL}/foto/${camera}.jpg?t=${Date.now()}`;
+        if (img.src !== url) {
+            img.src = url;
+            img.alt = `Foto ${camera}`;
+            debug("HTTP-PHOTO", `set ${camera}`, { url });
+        }
+    } else {
+        // Jika tidak ready, tampilkan placeholder
+        if (!img.src.endsWith("camera-placeholder.png")) {
+            img.src = "camera-placeholder.png";
+            img.alt = `Foto ${camera} (belum tersedia)`;
+        }
+    }
 }
 
 function connectDataWebSocket() {
@@ -122,13 +149,14 @@ function connectDataWebSocket() {
         if (dataSocket !== newSocket) return;
         clearTimeout(dataConnectionTimer);
         activeServerHost = target.host;
+        HTTP_BASE_URL = `${HTTP_SCHEME}://${activeServerHost}:${HTTP_PORT}`;
         setConnection(true, `Connected ${target.host}`);
         const subscription = {
             type: "subscribe",
             component: "dashboard-data",
             state: true,
             camera: false,
-            photos: false,
+            photos: false,   // kita tidak pakai WebSocket untuk foto
             state_hz: 30
         };
         debug("WS-DATA", "connected", target);
@@ -145,7 +173,8 @@ function connectDataWebSocket() {
         try {
             const data = JSON.parse(event.data);
             if (data.type) {
-                debug("WS-DATA", "control_received", data);
+                // Abaikan semua pesan type (photo_start, photo_chunk, dll.)
+                debug("WS-DATA", "control_ignored", data.type);
                 return;
             }
             applyTelemetry(data);
@@ -168,47 +197,7 @@ function connectDataWebSocket() {
     };
 }
 
-function processPhotoMessage(message) {
-    const channel = "MQTT-PHOTO";
-    debug(channel, "message_received", photoDebugDetail(message));
-    if (message.type === "photo_status") {
-        const ready = Boolean(message.atas || message.bawah);
-        if (!message.atas) byId("atasCamImg").src = "camera-placeholder.png";
-        if (!message.bawah) byId("bawahCamImg").src = "camera-placeholder.png";
-        setPhotoConnection(ready, ready ? "Camera Ready" : "Menunggu Target...");
-        return;
-    }
-    if (message.type === "photo_start") {
-        if (!['atas', 'bawah'].includes(message.camera)) return;
-        const totalChunks = number(message.total_chunks);
-        if (totalChunks < 1 || totalChunks > 10000) return;
-        photoTransfers.set(message.transfer_id, {
-            camera: message.camera,
-            channel,
-            mimeType: message.mime_type || "image/jpeg",
-            totalBytes: number(message.total_bytes),
-            totalChars: number(message.total_chars),
-            sha256: message.sha256,
-            chunks: new Array(totalChunks)
-        });
-        debug(channel, "transfer_started", photoDebugDetail(message));
-        return;
-    }
-    if (message.type === "photo_chunk") {
-        const transfer = photoTransfers.get(message.transfer_id);
-        const index = number(message.index, -1);
-        if (!transfer || index < 0 || index >= transfer.chunks.length || typeof message.data !== "string") return;
-        transfer.chunks[index] = message.data;
-        debug(transfer.channel, "chunk_stored", photoDebugDetail(message));
-        return;
-    }
-    if (message.type === "photo_end") {
-        finishPhotoTransfer(message.transfer_id);
-        return;
-    }
-    debug(channel, "unknown_message", photoDebugDetail(message));
-}
-
+// ─── MQTT hanya untuk fallback state (foto tidak diproses) ──────────────
 function loadMqttLibrary() {
     if (window.mqtt) return Promise.resolve(window.mqtt);
     if (mqttLibraryPromise) return mqttLibraryPromise;
@@ -254,28 +243,22 @@ async function connectMqttPhoto() {
         mqttClient.on("connect", () => {
             mqttConnected = true;
             debug("MQTT", "connected", { url: MQTT_CONFIG.url });
-            // Subscribe ke kedua topik
-            mqttClient.subscribe(MQTT_TOPICS.photo, { qos: 0 }, err => {
-                if (err) debug("MQTT", "photo_sub_failed", err);
-                else debug("MQTT", "subscribed_photo");
-            });
+            // Subscribe hanya untuk state fallback, tidak untuk foto (kita pakai HTTP)
             mqttClient.subscribe(MQTT_TOPICS.state, { qos: 0 }, err => {
                 if (err) debug("MQTT", "state_sub_failed", err);
                 else debug("MQTT", "subscribed_state");
             });
-            setPhotoConnection(true, "Cloud HiveMQ");
+            setPhotoConnection(true, "Cloud HiveMQ (fallback)");
         });
 
         mqttClient.on("message", (topic, payload) => {
             try {
                 const message = JSON.parse(payload.toString());
                 debug("MQTT", "message_received", { topic, bytes: payload.length });
-
-                if (topic === MQTT_TOPICS.photo) {
-                    processPhotoMessage(message);
-                } else if (topic === MQTT_TOPICS.state) {
+                if (topic === MQTT_TOPICS.state) {
                     applyMqttState(message);
                 }
+                // Foto diabaikan – kita pakai HTTP
             } catch (error) {
                 debug("MQTT", "invalid_payload", { topic, error: error.message });
             }
@@ -298,48 +281,6 @@ async function connectMqttPhoto() {
     } finally {
         mqttStarting = false;
     }
-}
-
-function finishPhotoTransfer(transferId) {
-    const transfer = photoTransfers.get(transferId);
-    if (!transfer) return;
-    if (transfer.chunks.some(chunk => typeof chunk !== "string")) {
-        debug(transfer.channel, "transfer_incomplete", { transferId });
-        photoTransfers.delete(transferId);
-        return;
-    }
-
-    const base64 = transfer.chunks.join("");
-    if (base64.length !== transfer.totalChars) {
-        debug(transfer.channel, "size_mismatch", { transferId, expected: transfer.totalChars, received: base64.length });
-        photoTransfers.delete(transferId);
-        return;
-    }
-
-    const image = byId(`${transfer.camera}CamImg`);
-    image.src = `data:${transfer.mimeType};base64,${base64}`;
-    image.alt = `Foto kamera ${transfer.camera}`;
-    setPhotoConnection(true, "Camera Ready");
-    debug(transfer.channel, "image_rendered", {
-        camera: transfer.camera,
-        transferId,
-        bytes: transfer.totalBytes,
-        characters: base64.length,
-        sha256: transfer.sha256
-    });
-    photoTransfers.delete(transferId);
-}
-
-function photoDebugDetail(message) {
-    if (message.type !== "photo_chunk") return message;
-    return {
-        type: message.type,
-        camera: message.camera,
-        transfer_id: message.transfer_id,
-        index: message.index,
-        total_chunks: message.total_chunks,
-        characters: typeof message.data === "string" ? message.data.length : 0
-    };
 }
 
 function setConnection(connected, message) {
@@ -386,7 +327,9 @@ async function sendCommand(command) {
     }
 }
 
+// ─── Render utama ─────────────────────────────────────────────────────────
 function render() {
+    if (!state) return;
     const heading = getHeadingDegrees();
 
     byId("xCoord").value = fixed(state.position.x, 3);
@@ -425,6 +368,10 @@ function render() {
     renderDataBoxes(heading);
     updateBoatMarker(heading);
     updateWaypoints();
+
+    // ─── Update foto via HTTP ─────────────────────────────────────
+    updatePhotoElement("atas");
+    updatePhotoElement("bawah");
 }
 
 function updateCompass(rawDegrees) {
