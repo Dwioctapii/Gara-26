@@ -5,11 +5,19 @@
       "headers": [
         {
           "key": "Permissions-Policy",
-          "value": "camera=*"
+          "value": "camera=*, geolocation=*"
         },
         {
           "key": "Cross-Origin-Opener-Policy",
           "value": "same-origin-allow-popups"
+        },
+        {
+          "key": "Cross-Origin-Embedder-Policy",
+          "value": "require-corp"
+        },
+        {
+          "key": "Access-Control-Allow-Origin",
+          "value": "*"
         }
       ]
     }
