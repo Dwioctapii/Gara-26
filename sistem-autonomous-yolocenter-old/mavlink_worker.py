@@ -37,12 +37,21 @@ class MavlinkWorker:
                 print(f"[MAVLINK] Terhubung ke system {self.master.target_system}")
                 self.store.update({"connected": True, "lastError": None, "sensors": {"heartbeat": True}})
                 self._request_mission()
+                
                 while not self.stop_event.is_set():
                     if time.monotonic() - self.last_request >= self.refresh_seconds and not self.downloading:
                         self._request_mission()
-                    message = self.master.recv_match(blocking=True, timeout=0.2)
-                    if message:
+                    
+                    # PERUBAHAN KUNCI: Kuras semua pesan di buffer secepat mungkin
+                    while True:
+                        message = self.master.recv_match(blocking=False)
+                        if message is None:
+                            break  # Buffer kosong, keluar dari loop pembacaan
                         self._consume(message)
+                    
+                    # Jeda sangat singkat agar CPU tidak 100% setelah menguras buffer
+                    time.sleep(0.005)
+                    
             except Exception as error:
                 self.store.update({"connected": False, "lastError": f"MAVLink: {error}", "sensors": {"heartbeat": False}})
                 if not self.stop_event.is_set():

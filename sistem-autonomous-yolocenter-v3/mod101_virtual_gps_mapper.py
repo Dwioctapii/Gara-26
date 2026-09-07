@@ -14,6 +14,8 @@ Rumus:
 Dimana R adalah matriks rotasi berdasarkan heading.
 """
 
+from __future__ import annotations
+
 import math
 
 
@@ -49,18 +51,17 @@ class VirtualGPSMapper:
         self.heading_rad = math.radians(heading_deg)
 
         # Pre-komputasi matriks rotasi dan inversnya
-        # Matriks rotasi: [cos θ  -sin θ]
-        #                 [sin θ   cos θ]
+        # Matriks basis kapal: X ke kanan, Y ke depan.
         cos_h = math.cos(self.heading_rad)
         sin_h = math.sin(self.heading_rad)
 
-        # Rotasi R (virtual → GPS)
-        self.R = ((cos_h, -sin_h),
-                  (sin_h,  cos_h))
+        # X virtual mengarah ke kanan kapal, Y virtual mengarah ke depan.
+        self.R = ((cos_h, sin_h),
+                  (-sin_h, cos_h))
 
         # Rotasi invers R⁻¹ (GPS → virtual)
-        self.R_inv = ((cos_h,  sin_h),
-                      (-sin_h, cos_h))
+        self.R_inv = ((cos_h, -sin_h),
+                      (sin_h, cos_h))
 
         # Konstanta konversi meter ↔ derajat GPS (perkiraan)
         # 1° latitude ≈ 111,320 meter (konstan)
@@ -103,10 +104,8 @@ class VirtualGPSMapper:
 
         # 2. Rotasi (virtual → GPS)
         # Perhatikan: Y virtual = arah depan, X virtual = ke kanan
-        # Rotasi standar: X' = cos*dx - sin*dy, Y' = sin*dx + cos*dy
-        # Tapi karena Y = arah depan (Utara), maka:
-        #   Δlon (Timur)  = cos*dx - sin*dy
-        #   Δlat (Utara)  = sin*dx + cos*dy
+        #   Δlon (Timur) = cos*X + sin*Y
+        #   Δlat (Utara) = -sin*X + cos*Y
         dlon_m = self.R[0][0] * dx + self.R[0][1] * dy
         dlat_m = self.R[1][0] * dx + self.R[1][1] * dy
 
@@ -144,8 +143,8 @@ class VirtualGPSMapper:
         dx_m, dy_m = self._deg_to_meters(dlat, dlon)
 
         # 3. Rotasi invers (GPS → virtual)
-        #   X_virtual = cos*dx_m + sin*dy_m
-        #   Y_virtual = -sin*dx_m + cos*dy_m
+        #   X_virtual = cos*Timur - sin*Utara
+        #   Y_virtual = sin*Timur + cos*Utara
         x_rel = self.R_inv[0][0] * dx_m + self.R_inv[0][1] * dy_m
         y_rel = self.R_inv[1][0] * dx_m + self.R_inv[1][1] * dy_m
 
@@ -164,8 +163,8 @@ class VirtualGPSMapper:
         self.heading_rad = math.radians(heading_deg)
         cos_h = math.cos(self.heading_rad)
         sin_h = math.sin(self.heading_rad)
-        self.R = ((cos_h, -sin_h),
-                  (sin_h,  cos_h))
-        self.R_inv = ((cos_h,  sin_h),
-                      (-sin_h, cos_h))
+        self.R = ((cos_h, sin_h),
+                  (-sin_h, cos_h))
+        self.R_inv = ((cos_h, -sin_h),
+                      (sin_h, cos_h))
 

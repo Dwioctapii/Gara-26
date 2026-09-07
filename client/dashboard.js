@@ -6,12 +6,20 @@ const DOMAIN_ROBOT   = "robot.neiaozora.my.id";   // tambahan fallback domain
 const SERVER_HOST = location.protocol === "file:" ? LOCAL_IP_ROBOT : location.hostname;
 const WS_PORT = 8765;
 const HTTP_PORT = 8766;
+const HALAMAN_HTTPS = location.protocol === "https:";
 const RECONNECT_DELAY_MS = 1000;
 const CONNECTION_TIMEOUT_MS = 2000;
+const LOCAL_STATE_STALE_MS = 3000;
 const DEBUG_ACTIVE = true;
+const disableInput = true;
 const MQTT_LIBRARY_URL = "https://unpkg.com/mqtt@5/dist/mqtt.min.js";
+const KUNCI_DISABLE_LOCAL = "asv-disable-local-state";
 const MAP_CENTER = [-7.069219, 110.304997];
 const TRACKS = ["A", "B"];
+const MAP_MAX_ZOOM = 22;
+const OSM_MAX_NATIVE_ZOOM = 19;
+const GOOGLE_MAX_NATIVE_ZOOM = 20;
+const pakaiGoogleSatellite = false;
 
 const MQTT_CONFIG = Object.freeze({
     url: "wss://b786a44b5790491898b3c676180e7862.s1.eu.hivemq.cloud:8884/mqtt",
@@ -20,20 +28,22 @@ const MQTT_CONFIG = Object.freeze({
 });
 
 const MQTT_TOPICS = Object.freeze({
-    photo: "/sistem_broadcast/foto",
     state: "/sistem_broadcast/state_dan_variabel"
 });
 
-const WS_SCHEME = location.protocol === "https:" ? "wss" : "ws";
-const HTTP_SCHEME = location.protocol === "https:" ? "https" : "http";
+const LOCAL_STATE_TOPIC = "/local_scope/gui/state";
 
-// Daftar host: local IP → hostname → domain
-const SERVER_HOSTS = [...new Set([LOCAL_IP_ROBOT, SERVER_HOST, DOMAIN_ROBOT])];
+// WebSocket robot hanya berada di LAN. Cloud memakai MQTT melalui WSS HiveMQ.
+const SERVER_HOSTS = [...new Set([LOCAL_IP_ROBOT, SERVER_HOST])]
+    .filter(host => host && host !== DOMAIN_ROBOT);
 const WS_URLS = SERVER_HOSTS
-    .map(host => ({ host, url: `${WS_SCHEME}://${host}:${WS_PORT}` }));
+    .map(host => ({ host, url: `ws://${host}:${WS_PORT}` }));
 
-// Base URL untuk HTTP (digunakan untuk foto)
-let HTTP_BASE_URL = "";
+const CLOUD_HTTP_BASE_URL = `https://${DOMAIN_ROBOT}`;
+let HTTP_BASE_URL = HALAMAN_HTTPS
+    ? CLOUD_HTTP_BASE_URL
+    : `http://${LOCAL_IP_ROBOT}:${HTTP_PORT}`;
+let labelHttpAktif = HALAMAN_HTTPS ? `Cloud ${DOMAIN_ROBOT}` : `Local ${LOCAL_IP_ROBOT}`;
 
 let state = null;
 
@@ -51,6 +61,11 @@ let mqttClient = null;
 let mqttConnected = false;
 let mqttStarting = false;
 let mqttLibraryPromise = null;
+let lastLocalStateAt = 0;
+let dataSocketOpenedAt = 0;
+let stateMqttTerakhir = null;
+let lokalDinonaktifkan = HALAMAN_HTTPS || bacaPilihanDisableLocal();
+const photoRetryAt = { atas: 0, bawah: 0 };
 
 // Map & Visualization Layers
 let map = null;
@@ -58,11 +73,13 @@ let boatMarker = null;
 let boatIcon = null;
 let boatHeading = 0;
 let missionRouteLine = null;
+let trajectoryLine = null;
 let waypointMarkers = [];
 let activeWpCircle = null;
 let hasCenteredOnBoat = false;
 let lastRenderedWpSignature = "";
 let lastRenderedCurrentWp = -1;
+let lastTrajectorySignature = "";
 
 // Compass
 let compassReady = false;
@@ -73,6 +90,43 @@ const byId = id => document.getElementById(id);
 const number = (value, fallback = 0) => Number.isFinite(Number(value)) ? Number(value) : fallback;
 const fixed = (value, digits = 2) => number(value).toFixed(digits);
 
+function tampilkanInputDinonaktifkan() {
+    alert("Maaf, client control dimatikan");
+}
+
+function pasangPenjagaInput() {
+    if (!disableInput) return;
+    const kontrolDiizinkan = new Set([
+        "disableLocalToggle",
+        "recenterMapBtn",
+        "clearTrailBtn"
+    ]);
+
+    document.addEventListener("click", event => {
+        const kontrol = event.target.closest("button, input, select, textarea");
+        if (!kontrol || kontrolDiizinkan.has(kontrol.id)) return;
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        tampilkanInputDinonaktifkan();
+    }, true);
+}
+
+function bacaPilihanDisableLocal() {
+    try {
+        return localStorage.getItem(KUNCI_DISABLE_LOCAL) === "1";
+    } catch (_error) {
+        return false;
+    }
+}
+
+function simpanPilihanDisableLocal() {
+    try {
+        localStorage.setItem(KUNCI_DISABLE_LOCAL, lokalDinonaktifkan ? "1" : "0");
+    } catch (_error) {
+        debug("SOURCE", "local_storage_unavailable");
+    }
+}
+
 function debug(channel, event, detail) {
     if (!DEBUG_ACTIVE) return;
     const time = new Date().toISOString();
@@ -80,27 +134,66 @@ function debug(channel, event, detail) {
 }
 
 function getHeadingDegrees() {
+    const posisiArena = state.arena && state.arena.posisi_sekarang;
+    if (posisiArena && Number.isFinite(Number(posisiArena.heading))) {
+        return number(posisiArena.heading);
+    }
     const yawRadians = number(state.orientation.z);
     const yawDegrees = yawRadians * 180 / Math.PI;
     return ((yawDegrees % 360) + 360) % 360;
 }
 
+function isTelemetryValid(data) {
+    if (!data || typeof data !== "object" || Array.isArray(data)) return false;
+    return [
+        "position", "orientation", "linear", "angular", "battery1",
+        "thrusterPort", "thrusterStar", "gps", "mission", "sensors", "detection"
+    ].every(key => data[key] && typeof data[key] === "object");
+}
+
+function isLocalStateActive() {
+    if (lokalDinonaktifkan) return false;
+    return Boolean(
+        dataSocket &&
+        dataSocket.readyState === WebSocket.OPEN &&
+        Date.now() - lastLocalStateAt <= LOCAL_STATE_STALE_MS
+    );
+}
+
 function applyTelemetry(data) {
-    if (!data || typeof data !== "object" || Array.isArray(data)) return;
+    if (lokalDinonaktifkan) {
+        debug("WS-DATA", "ignored (local disabled)");
+        return;
+    }
+    if (!isTelemetryValid(data)) {
+        debug("WS-DATA", "invalid_state_schema", data);
+        return;
+    }
     debug("WS-DATA", "state_received", data);
+    lastLocalStateAt = Date.now();
+    HTTP_BASE_URL = `http://${activeServerHost}:${HTTP_PORT}`;
+    labelHttpAktif = `Local ${activeServerHost}`;
     state = data;
+    setConnection(true, `Local ${activeServerHost}`);
     render();
 }
 
 // ─── Fungsi untuk menerapkan state dari MQTT (fallback) ──────────────────
 function applyMqttState(data) {
-    if (!data || typeof data !== "object" || Array.isArray(data)) return;
-    if (dataSocket && dataSocket.readyState === WebSocket.OPEN) {
+    if (!isTelemetryValid(data)) {
+        debug("MQTT-STATE", "invalid_state_schema", data);
+        return;
+    }
+    stateMqttTerakhir = data;
+    if (isLocalStateActive()) {
         debug("MQTT-STATE", "ignored (WS active)");
         return;
     }
-    debug("MQTT-STATE", "applied as fallback", data);
+    debug("MQTT-STATE", lokalDinonaktifkan ? "applied (cloud forced)" : "applied as fallback", data);
+    HTTP_BASE_URL = CLOUD_HTTP_BASE_URL;
+    labelHttpAktif = `Cloud ${DOMAIN_ROBOT}`;
     state = data;
+    setConnection(true, lokalDinonaktifkan ? "Cloud MQTT (Local disabled)" : "Cloud MQTT fallback");
     render();
 }
 
@@ -110,18 +203,37 @@ function updatePhotoElement(camera) {
     if (!img) return;
 
     const readyKey = `foto_${camera}_ready`;
-    const isReady = state && state.detection && state.detection[readyKey] === true;
+    const foto = state && state.foto && state.foto[camera];
+    const isReady = foto
+        ? foto.tersedia === true
+        : state && state.detection && state.detection[readyKey] === true;
+    const revision = foto ? number(foto.revisi) : (isReady ? 1 : 0);
+    const signature = `${HTTP_BASE_URL}:${isReady}:${revision}`;
+
+    if (img.dataset.photoSignature === signature) {
+        return;
+    }
+    if (isReady && Date.now() < photoRetryAt[camera]) {
+        return;
+    }
 
     if (isReady && HTTP_BASE_URL) {
-        // Tambahkan timestamp untuk mencegah cache
-        const url = `${HTTP_BASE_URL}/foto/${camera}.jpg?t=${Date.now()}`;
-        if (img.src !== url) {
-            img.src = url;
-            img.alt = `Foto ${camera}`;
-            debug("HTTP-PHOTO", `set ${camera}`, { url });
-        }
+        const url = `${HTTP_BASE_URL}/foto/${camera}.jpg?v=${revision}`;
+        img.dataset.photoSignature = signature;
+        img.onload = () => {
+            photoRetryAt[camera] = 0;
+            setPhotoConnection(true, labelHttpAktif);
+        };
+        img.onerror = () => {
+            img.dataset.photoSignature = "";
+            photoRetryAt[camera] = Date.now() + 3000;
+            setPhotoConnection(false, "Foto HTTP belum tersedia");
+        };
+        img.src = url;
+        img.alt = `Foto ${camera}`;
+        debug("HTTP-PHOTO", `set ${camera}`, { url });
     } else {
-        // Jika tidak ready, tampilkan placeholder
+        img.dataset.photoSignature = signature;
         if (!img.src.endsWith("camera-placeholder.png")) {
             img.src = "camera-placeholder.png";
             img.alt = `Foto ${camera} (belum tersedia)`;
@@ -132,6 +244,10 @@ function updatePhotoElement(camera) {
 function connectDataWebSocket() {
     clearTimeout(dataReconnectTimer);
     clearTimeout(dataConnectionTimer);
+    if (lokalDinonaktifkan) {
+        debug("WS-DATA", "connection_skipped (local disabled)");
+        return;
+    }
 
     const target = WS_URLS[dataWsUrlIndex % WS_URLS.length];
     dataWsUrlIndex += 1;
@@ -149,15 +265,12 @@ function connectDataWebSocket() {
         if (dataSocket !== newSocket) return;
         clearTimeout(dataConnectionTimer);
         activeServerHost = target.host;
-        HTTP_BASE_URL = `${HTTP_SCHEME}://${activeServerHost}:${HTTP_PORT}`;
-        setConnection(true, `Connected ${target.host}`);
+        lastLocalStateAt = 0;
+        dataSocketOpenedAt = Date.now();
+        setConnection(false, `Menunggu state ${target.host}`);
         const subscription = {
-            type: "subscribe",
-            component: "dashboard-data",
-            state: true,
-            camera: false,
-            photos: false,   // kita tidak pakai WebSocket untuk foto
-            state_hz: 30
+            aksi: "berlangganan",
+            topik: LOCAL_STATE_TOPIC
         };
         debug("WS-DATA", "connected", target);
         debug("WS-DATA", "subscription_sent", subscription);
@@ -172,11 +285,19 @@ function connectDataWebSocket() {
         }
         try {
             const data = JSON.parse(event.data);
+            if (data.aksi === "pesan") {
+                if (data.topik === LOCAL_STATE_TOPIC) applyTelemetry(data.data);
+                return;
+            }
+            if (data.aksi === "galat") {
+                debug("WS-DATA", "broker_error", data.pesan);
+                return;
+            }
             if (data.type) {
-                // Abaikan semua pesan type (photo_start, photo_chunk, dll.)
                 debug("WS-DATA", "control_ignored", data.type);
                 return;
             }
+            // Kompatibilitas read-only dengan server YOLOCenter lama.
             applyTelemetry(data);
         } catch (error) {
             debug("WS-DATA", "invalid_payload", { payload: event.data, error: error.message });
@@ -191,13 +312,56 @@ function connectDataWebSocket() {
     newSocket.onclose = event => {
         if (dataSocket !== newSocket) return;
         clearTimeout(dataConnectionTimer);
+        lastLocalStateAt = 0;
+        dataSocketOpenedAt = 0;
         debug("WS-DATA", "disconnected", { code: event.code, reason: event.reason });
+        if (lokalDinonaktifkan) return;
         setConnection(false, "Mencari server data");
         dataReconnectTimer = setTimeout(connectDataWebSocket, RECONNECT_DELAY_MS);
     };
 }
 
-// ─── MQTT hanya untuk fallback state (foto tidak diproses) ──────────────
+function perbaruiToggleSumber() {
+    const toggle = byId("disableLocalToggle");
+    const pembungkus = byId("disableLocalControl");
+    if (toggle) toggle.checked = lokalDinonaktifkan;
+    if (toggle) toggle.disabled = HALAMAN_HTTPS;
+    if (pembungkus) pembungkus.classList.toggle("active", lokalDinonaktifkan);
+    if (pembungkus && HALAMAN_HTTPS) {
+        pembungkus.title = "Halaman HTTPS wajib memakai cloud; browser memblokir koneksi lokal tanpa TLS";
+    }
+}
+
+function aturDisableLocal(dinonaktifkan) {
+    lokalDinonaktifkan = HALAMAN_HTTPS || Boolean(dinonaktifkan);
+    simpanPilihanDisableLocal();
+    perbaruiToggleSumber();
+    lastLocalStateAt = 0;
+    dataSocketOpenedAt = 0;
+
+    if (lokalDinonaktifkan) {
+        clearTimeout(dataReconnectTimer);
+        clearTimeout(dataConnectionTimer);
+        const socketLama = dataSocket;
+        dataSocket = null;
+        if (socketLama && socketLama.readyState < WebSocket.CLOSING) {
+            socketLama.close(1000, "Local dinonaktifkan operator");
+        }
+        if (stateMqttTerakhir) {
+            applyMqttState(stateMqttTerakhir);
+        } else {
+            setConnection(false, "Cloud MQTT: menunggu state");
+        }
+        connectMqttState();
+        return;
+    }
+
+    setConnection(false, "Mencari server data lokal");
+    if (stateMqttTerakhir) applyMqttState(stateMqttTerakhir);
+    connectDataWebSocket();
+}
+
+// ─── MQTT hanya untuk fallback state ───────────────────────────────────
 function loadMqttLibrary() {
     if (window.mqtt) return Promise.resolve(window.mqtt);
     if (mqttLibraryPromise) return mqttLibraryPromise;
@@ -219,7 +383,7 @@ function loadMqttLibrary() {
     return mqttLibraryPromise;
 }
 
-async function connectMqttPhoto() {
+async function connectMqttState() {
     if (mqttClient || mqttStarting) return;
     mqttStarting = true;
     debug("MQTT", "connecting", { url: MQTT_CONFIG.url });
@@ -243,12 +407,13 @@ async function connectMqttPhoto() {
         mqttClient.on("connect", () => {
             mqttConnected = true;
             debug("MQTT", "connected", { url: MQTT_CONFIG.url });
-            // Subscribe hanya untuk state fallback, tidak untuk foto (kita pakai HTTP)
+            if (lokalDinonaktifkan && !stateMqttTerakhir) {
+                setConnection(false, "Cloud MQTT: menunggu state");
+            }
             mqttClient.subscribe(MQTT_TOPICS.state, { qos: 0 }, err => {
                 if (err) debug("MQTT", "state_sub_failed", err);
                 else debug("MQTT", "subscribed_state");
             });
-            setPhotoConnection(true, "Cloud HiveMQ (fallback)");
         });
 
         mqttClient.on("message", (topic, payload) => {
@@ -258,7 +423,6 @@ async function connectMqttPhoto() {
                 if (topic === MQTT_TOPICS.state) {
                     applyMqttState(message);
                 }
-                // Foto diabaikan – kita pakai HTTP
             } catch (error) {
                 debug("MQTT", "invalid_payload", { topic, error: error.message });
             }
@@ -268,16 +432,19 @@ async function connectMqttPhoto() {
         mqttClient.on("offline", () => {
             mqttConnected = false;
             debug("MQTT", "offline");
+            if (!isLocalStateActive()) setConnection(false, "Cloud MQTT offline");
         });
         mqttClient.on("close", () => {
             mqttConnected = false;
             debug("MQTT", "disconnected");
+            if (!isLocalStateActive()) setConnection(false, "Cloud MQTT terputus");
         });
         mqttClient.on("error", error => debug("MQTT", "error", { error: error.message }));
     } catch (error) {
         mqttClient = null;
         mqttLibraryPromise = null;
         debug("MQTT", "startup_failed", { error: error.message });
+        if (!isLocalStateActive()) setConnection(false, "Cloud MQTT gagal dimuat");
     } finally {
         mqttStarting = false;
     }
@@ -295,13 +462,26 @@ function setPhotoConnection(connected, message) {
     footer.className = connected ? "blue" : "red";
 }
 
+function monitorLocalState() {
+    if (lokalDinonaktifkan) return;
+    if (!dataSocket || dataSocket.readyState !== WebSocket.OPEN) return;
+    const acuanWaktu = lastLocalStateAt || dataSocketOpenedAt;
+    if (acuanWaktu && Date.now() - acuanWaktu > LOCAL_STATE_STALE_MS) {
+        debug("WS-DATA", "state_timeout", { host: activeServerHost });
+        dataSocket.close();
+    }
+}
+
 async function sendCommand(command) {
-    const httpUrl = `${HTTP_SCHEME}://${activeServerHost}:${HTTP_PORT}`;
+    if (disableInput && command.command !== "clear_history") {
+        tampilkanInputDinonaktifkan();
+        return null;
+    }
     const request = { id: Date.now().toString(36), ...command };
 
     try {
-        debug("HTTP-COMMAND", "request_sent", { url: `${httpUrl}/api/command`, data: request });
-        const response = await fetch(`${httpUrl}/api/command`, {
+        debug("HTTP-COMMAND", "request_sent", { url: `${HTTP_BASE_URL}/api/command`, data: request });
+        const response = await fetch(`${HTTP_BASE_URL}/api/command`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify(request)
@@ -367,6 +547,7 @@ function render() {
     updateCompass(heading);
     renderDataBoxes(heading);
     updateBoatMarker(heading);
+    updateTrajectory();
     updateWaypoints();
 
     // ─── Update foto via HTTP ─────────────────────────────────────
@@ -415,6 +596,12 @@ function initComponents() {
     byId("dataBoxesGrid1").innerHTML = ["posBox","oriBox","linBox","angBox"].map(id => `<div class="black-box" id="${id}"></div>`).join("");
     byId("dataBoxesGrid2").innerHTML = ["bat1Box","sogCogBox","thrusterPortBox","thrusterStarBox"].map(id => `<div class="black-box" id="${id}"></div>`).join("");
 
+    const disableLocalToggle = byId("disableLocalToggle");
+    if (disableLocalToggle) {
+        perbaruiToggleSumber();
+        disableLocalToggle.onchange = () => aturDisableLocal(disableLocalToggle.checked);
+    }
+
     const commands = {
         armBtn: { command: "arm", action: "arm" },
         disarmBtn: { command: "arm", action: "disarm" },
@@ -438,8 +625,9 @@ function initComponents() {
     const recenterBtn = byId("recenterMapBtn");
     if (recenterBtn) {
         recenterBtn.onclick = () => {
-            if (state && state.gps.lat != null && state.gps.lon != null) {
-                map.panTo([state.gps.lat, state.gps.lon]);
+            const posisi = posisiPetaSekarang();
+            if (posisi) {
+                map.panTo([posisi.lat, posisi.lon]);
             } else {
                 map.panTo(MAP_CENTER);
             }
@@ -453,15 +641,41 @@ function initComponents() {
     }
 }
 
+function pasangLayerOsm() {
+    RotaMap.tileLayer(
+        "https://tile.openstreetmap.org/{z}/{x}/{y}.png",
+        { maxNativeZoom: OSM_MAX_NATIVE_ZOOM }
+    ).addTo(map);
+}
+
+function pasangLayerPeta() {
+    if (!pakaiGoogleSatellite) {
+        pasangLayerOsm();
+        return;
+    }
+
+    RotaMap.tileLayer(
+        "https://mt1.google.com/vt/lyrs=s&x={x}&y={y}&z={z}",
+        { maxNativeZoom: GOOGLE_MAX_NATIVE_ZOOM }
+    ).addTo(map);
+    debug("MAP", "google_satellite_public_active");
+}
+
 function initMap() {
     if (typeof RotaMap === "undefined") {
         byId("map").textContent = "RotaMap tidak tersedia";
         return;
     }
-    map = RotaMap.map("map", { center: MAP_CENTER, zoom: 19, maxZoom: 22, minZoom: 14 });
-    RotaMap.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png").addTo(map);
+    map = RotaMap.map("map", {
+        center: MAP_CENTER,
+        zoom: 19,
+        maxZoom: MAP_MAX_ZOOM,
+        minZoom: 14
+    });
+    pasangLayerPeta();
 
     missionRouteLine = RotaMap.polyline([], { color: '#f59e0b', weight: 3, dashArray: '6,6', opacity: 0.85 }).addTo(map);
+    trajectoryLine = RotaMap.polyline([], { color: '#22d3ee', weight: 3, opacity: 0.9 }).addTo(map);
 
     boatIcon = RotaMap.divIcon({
         html: '<div style="font-size:26px;line-height:30px;text-align:center;filter:drop-shadow(0 2px 5px rgba(0,0,0,0.6));">⛵</div>',
@@ -474,11 +688,9 @@ function initMap() {
 function updateBoatMarker(heading) {
     if (!map) return;
 
-    const hasFix = Boolean(state.gps.fix) && state.gps.lat != null && state.gps.lon != null;
-    if (!hasFix) return;
-
-    const lat = state.gps.lat;
-    const lon = state.gps.lon;
+    const posisi = posisiPetaSekarang();
+    if (!posisi) return;
+    const { lat, lon } = posisi;
 
     if (!boatMarker) {
         boatMarker = RotaMap.marker([lat, lon], { icon: boatIcon, rotation: 0 }).addTo(map);
@@ -491,6 +703,31 @@ function updateBoatMarker(heading) {
         map.panTo([lat, lon]);
         hasCenteredOnBoat = true;
     }
+}
+
+function posisiPetaSekarang() {
+    if (!state) return null;
+    const posisiArena = state.arena && state.arena.posisi_sekarang;
+    if (posisiArena && posisiArena.lat != null && posisiArena.lon != null) {
+        return posisiArena;
+    }
+    return null;
+}
+
+function updateTrajectory() {
+    if (!trajectoryLine) return;
+    const riwayat = state.arena && Array.isArray(state.arena.riwayat_pergerakan)
+        ? state.arena.riwayat_pergerakan
+        : [];
+    const titikTerakhir = riwayat[riwayat.length - 1];
+    const signature = `${riwayat.length}:${titikTerakhir ? titikTerakhir.timestamp : ""}`;
+    if (signature === lastTrajectorySignature) return;
+
+    const titikPeta = riwayat
+        .filter(titik => titik.lat != null && titik.lon != null)
+        .map(titik => [titik.lat, titik.lon]);
+    trajectoryLine.setLatLngs(titikPeta);
+    lastTrajectorySignature = signature;
 }
 
 function updateWaypoints() {
@@ -576,9 +813,15 @@ function updateWaypoints() {
 }
 
 window.addEventListener("load", () => {
+    pasangPenjagaInput();
     initComponents();
     initMap();
-    connectDataWebSocket();
-    connectMqttPhoto();
+    connectMqttState();
+    if (lokalDinonaktifkan) {
+        setConnection(false, "Cloud MQTT: menunggu state");
+    } else {
+        connectDataWebSocket();
+    }
+    setInterval(monitorLocalState, 1000);
     setInterval(() => byId("timeFooter").textContent = new Date().toLocaleString(), 100);
 });

@@ -214,9 +214,14 @@
   RMap.prototype._renderTiles = function () {
     var layer = this._layers[0];
     if (!layer) return;
-    var z = Math.round(this._zoom);
+    var zoomTampilan = Math.round(this._zoom);
+    var zoomNativeMaksimum = layer.opts.maxNativeZoom;
+    var z = zoomNativeMaksimum != null
+      ? Math.min(zoomTampilan, Math.floor(zoomNativeMaksimum))
+      : zoomTampilan;
     var n = Math.pow(2, z);
-    var scaleDiff = Math.pow(2, this._zoom - z); // fractional-zoom support
+    // Di atas zoom native, tile resolusi terakhir diperbesar oleh browser.
+    var scaleDiff = Math.pow(2, this._zoom - z);
     var half = Math.hypot(this._w, this._h) / 2 + TILE;
 
     var minWX = this._wc.x - half, maxWX = this._wc.x + half;

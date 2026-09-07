@@ -207,6 +207,26 @@
             font-size: 14px;
             z-index: 100;
         }
+        .source-toggle {
+            width: auto;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            color: #555;
+            white-space: nowrap;
+            cursor: pointer;
+        }
+        .source-toggle input {
+            width: 16px;
+            height: 16px;
+            flex: none;
+            margin: 0;
+            accent-color: #9a3412;
+        }
+        .source-toggle.active {
+            color: #9a3412;
+            font-weight: bold;
+        }
         .blue {
             color: blue;
             font-weight: bold;
@@ -465,7 +485,11 @@
 
     <div class="sticky-footer">
         <div>Telemetri: <span id="connFooter" class="red">Disconnected</span></div>
-        <div>Foto WS Base64: <span id="photoFooter" class="red">Menunggu Target...</span></div>
+        <label id="disableLocalControl" class="source-toggle" title="Paksa telemetri MQTT dan HTTP melalui Cloudflare Tunnel">
+            <input id="disableLocalToggle" type="checkbox" />
+            <span>Disable Local</span>
+        </label>
+        <div>Foto HTTP: <span id="photoFooter" class="red">Menunggu foto...</span></div>
         <div>ASV Status: <span id="asvStatusFooter">Menunggu Data</span></div>
         <div>GPS: <span id="gpsFixFooter">Menunggu Data</span></div>
         <div>Depth: <span id="depthFooter">-</span> m</div>

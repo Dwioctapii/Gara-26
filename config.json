@@ -1,0 +1,16 @@
+{
+  "pid_config": {
+    "kp": 2.0,
+    "ki": 0.0,
+    "kd": 0.0,
+    "integral_limit": 100.0,
+    "deadband": 5.0,
+    "_version": 0
+  },
+  "currentTrack": "A",
+  "home": null,
+  "loggerActive": false,
+  "mission": {
+    "waypoints": []
+  }
+}

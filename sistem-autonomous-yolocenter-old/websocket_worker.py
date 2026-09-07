@@ -39,24 +39,21 @@ def start_websocket(host: str, port: int, hz: float, store, photo_dir, command_h
             availability = {}
             for camera in ("atas", "bawah"):
                 path = photo_dir / f"{camera}.jpg"
-                exists = path.is_file()
-                availability[camera] = exists
-                if not exists:
+                availability[camera] = path.is_file()
+                if not availability[camera]:
                     previous_photos.pop(camera, None)
                     continue
 
-                # Signature diabaikan di server_common, selalu kirim jika ada file
                 prepared = await asyncio.get_running_loop().run_in_executor(
                     None, _prepare_photo_transfer,
-                    camera, path, None   # abaikan signature
+                    camera, path, previous_photos.get(camera)
                 )
                 if not prepared:
-                    print(f"[WS-PHOTO] Gagal siapkan {camera}")
                     continue
                 metadata, chunks, signature = prepared
                 transfer_id = metadata["transfer_id"]
                 digest = metadata["sha256"]
-                print(f"[WS-PHOTO] Transfer {camera} dimulai, chunks={len(chunks)}")
+                _debug("WS-PHOTO", "transfer_started", metadata)
                 await send(json.dumps({"type": "photo_start", **metadata}, separators=(",", ":")))
                 for index, chunk in enumerate(chunks):
                     chunk_data = {
@@ -68,6 +65,13 @@ def start_websocket(host: str, port: int, hz: float, store, photo_dir, command_h
                         "data": chunk,
                     }
                     await send(json.dumps(chunk_data, separators=(",", ":")))
+                    _debug("WS-PHOTO", "chunk_sent", {
+                        "camera": camera,
+                        "transfer_id": transfer_id,
+                        "index": index,
+                        "total_chunks": len(chunks),
+                        "base64_chars": len(chunk),
+                    })
                 await send(json.dumps({
                     "type": "photo_end",
                     "camera": camera,
@@ -75,11 +79,10 @@ def start_websocket(host: str, port: int, hz: float, store, photo_dir, command_h
                     "sha256": digest,
                 }, separators=(",", ":")))
                 previous_photos[camera] = signature
-                print(f"[WS-PHOTO] Transfer {camera} selesai")
+                _debug("WS-PHOTO", "transfer_finished", metadata)
             await send(json.dumps({"type": "photo_status", **availability}, separators=(",", ":")))
             return previous_photos
 
-        # ─── TX loop: kirim state, camera, dan foto ────────────────────
         async def tx():
             next_state = 0.0
             next_camera = 0.0
@@ -91,6 +94,7 @@ def start_websocket(host: str, port: int, hz: float, store, photo_dir, command_h
                 if profile["state"] and now >= next_state:
                     snapshot = store.snapshot()
                     await send(json.dumps(snapshot, separators=(",", ":")))
+                    _debug("WS-DATA", "state_sent", snapshot)
                     next_state = now + 1.0 / profile["state_hz"]
                 if profile["camera"] and now >= next_camera:
                     frame, frame_sequence = await asyncio.get_running_loop().run_in_executor(
@@ -98,14 +102,13 @@ def start_websocket(host: str, port: int, hz: float, store, photo_dir, command_h
                     )
                     if frame:
                         await send(frame)
+                        _debug("WS-CAMERA", "binary_frame_sent", {"bytes": len(frame)})
                     next_camera = now + 1.0 / profile["camera_hz"]
-                # ─── Selalu kirim foto, abaikan profile["photos"] ───
-                if now >= next_photos:
+                if profile["photos"] and now >= next_photos:
                     previous_photos = await send_photos(previous_photos)
                     next_photos = now + PHOTO_CHECK_SECONDS
                 await asyncio.sleep(0.005)
-
-        # ─── RX loop: terima perintah ────────────────────────────────
+        
         async def rx():
             async for raw in websocket:
                 cmd = None
@@ -150,8 +153,7 @@ def start_websocket(host: str, port: int, hz: float, store, photo_dir, command_h
                     ack = {"type": "ack", "id": cmd.get("id") if isinstance(cmd, dict) else None, "ok": False, "error": str(exc)}
                     await send(json.dumps(ack))
                     _debug("WS-COMMAND", "request_failed", ack)
-
-        # ─── Jalankan kedua task ───────────────────────────────────────
+                    
         tasks = {asyncio.create_task(tx()), asyncio.create_task(rx())}
         done, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
         for task in pending:
