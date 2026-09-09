@@ -78,6 +78,7 @@ Semua baca/tulis harus melalui singleton `state` dari `mod05_state_manager.py`. 
 - `mod11_http_worker.py`: HTTP untuk command, health, dan foto hasil deteksi.
 - `mod102_arena_worker.py`: pemilik pemetaan arena, posisi sekarang, dan riwayat trajectory.
 - `../client/server_client.py`: HTTP statis dashboard web; tidak menangani API robot.
+- `../client/secret.html`: panel kendali internal yang hanya dilayani melalui route `/secret` pada server client.
 - `mod12_server_common.py`: format debug worker jaringan.
 - `gui/`: frontend desktop lama; backend-nya hanya memakai RobotTopic.
 - `../client/dashboard.js`: frontend web; state lokal dari RobotTopic, fallback state dari MQTT, foto dari HTTP.
@@ -106,9 +107,10 @@ Pemilihan pasangan buoy saat ini masih berdasarkan bbox terbesar per warna, buka
 4. Foto tidak dikirim melalui MQTT maupun WebSocket. Dashboard mengambil `/foto/atas.jpg` dan `/foto/bawah.jpg` melalui HTTP ketika revisi foto berubah.
 5. Perintah operator dikirim ke `POST /api/command` pada HTTP aktif: lokal memakai `http://IP:8766`, cloud memakai `https://robot.neiaozora.my.id`.
 6. Toggle `Disable Local` menutup dan menghentikan reconnect WebSocket telemetri lokal, memakai state MQTT cloud, serta mengarahkan foto dan command ke HTTP robot melalui Cloudflare Tunnel. Pilihan disimpan di browser; protokol foto dan command tetap HTTP, bukan MQTT.
-7. `disableInput=true` menjadikan dashboard hanya-pantau. Semua kontrol menampilkan pesan penolakan kecuali `Disable Local`, `Center ASV`, dan `Reset Server History` untuk trajectory.
+7. `disableInput=true` menjadikan dashboard hanya-pantau. Semua kontrol menampilkan pesan penolakan kecuali `Disable Local`, `Lock Heading`, `Center ASV`, dan `Reset Server History` untuk trajectory.
 8. `disableLocal=true` hanya memasang atribut `disabled` pada checkbox. Nilai checked dan pilihan sumber local/cloud tidak diubah oleh variabel tersebut.
 9. Peta dapat ditampilkan sampai zoom 22, tetapi OSM hanya diminta sampai native zoom 19. `rotamap.js` memperbesar tile z19 secara lokal pada zoom 20–22 sehingga tidak meminta tile yang tidak tersedia. Google Satellite bersifat opsional melalui `pakaiGoogleSatellite=true`, memakai endpoint tile publik `mt1.google.com` tanpa API key, dan memakai native zoom 20 sebelum diperbesar lokal.
+10. Route `/secret` membuka panel “ASV Control Rahasia” tanpa tautan dari dashboard utama. `/secret.html`, source server, dan file lain di luar aset frontend yang diizinkan dikembalikan sebagai 404.
 
 ### Aliran arena dan trajectory
 
@@ -121,6 +123,7 @@ Pemilihan pasangan buoy saat ini masih berdasarkan bbox terbesar per warna, buka
 7. JSON `/local_scope/arena/state` membawa arena A/B, arena aktif, status sesi, posisi sekarang, riwayat, visualisasi, acuan, dan galat. GUI-state menggabungkannya ke snapshot frontend/MQTT.
 8. Dashboard hanya menggambar data `state.arena`; transformasi koordinat virtual ke GPS dilakukan backend.
 9. Satu-satunya command tambahan yang diproses langsung arena worker adalah `clear_history`.
+10. Checkbox `Lock Heading` aktif secara default. Saat aktif, bearing peta mengikuti heading kompas sehingga kapal tetap menghadap vertikal dan trajectory, waypoint, serta arena berputar bersama. Saat dimatikan, peta kembali North-up. Fitur ini hanya mengubah tampilan client dan tidak mengubah data MAVLink atau cold state.
 
 API GET internal untuk debugging foto berada pada HTTP robot yang sama:
 

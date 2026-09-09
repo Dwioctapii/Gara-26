@@ -12,6 +12,16 @@ from urllib.parse import urlparse
 ROOT_CLIENT = Path(__file__).resolve().parent
 HOST_CLIENT = os.getenv("ASV_CLIENT_HOST", "0.0.0.0")
 PORT_CLIENT = int(os.getenv("ASV_CLIENT_PORT", "8767"))
+ASET_PUBLIK = {
+    "/index.html",
+    "/dashboard.js",
+    "/rotamap.js",
+    "/logo.svg",
+    "/compass-rose.png",
+    "/camera-placeholder.png",
+    "/secret.css",
+    "/secret.js",
+}
 
 
 class ClientHandler(http.server.SimpleHTTPRequestHandler):
@@ -37,7 +47,9 @@ class ClientHandler(http.server.SimpleHTTPRequestHandler):
             return
         if jalur == "/":
             self.path = "/index.html"
-        elif jalur.endswith("/"):
+        elif jalur == "/secret":
+            self.path = "/secret.html"
+        elif jalur not in ASET_PUBLIK:
             self.send_error(404, "Route tidak ditemukan")
             return
         super().do_GET()

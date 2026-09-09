@@ -467,9 +467,13 @@
                     <img id="bawahCamImg" src="camera-placeholder.png" alt="Foto kamera bawah belum tersedia" />
                 </div>
                 <div class="camera">
-                    <div class="panel-title" style="display:flex;justify-content:space-between;align-items:center;">
+                    <div class="panel-title" style="display:flex;justify-content:space-between;align-items:center;gap:6px;flex-wrap:wrap;">
                         <span>Map / Waypoints & Trajectory</span>
-                        <div style="display:flex;gap:4px;">
+                        <div style="display:flex;gap:4px;align-items:center;">
+                            <label class="source-toggle" title="Pertahankan arah heading kapal tetap vertikal dengan memutar peta">
+                                <input id="kunciHeadingKompasToggle" type="checkbox" checked />
+                                <span>Lock Heading</span>
+                            </label>
                             <button id="recenterMapBtn" style="height:22px;padding:1px 6px;font-size:11px;background:#0b5e8a;color:#fff;border:none;border-radius:3px;cursor:pointer;">Center ASV</button>
                             <button id="clearTrailBtn" style="height:22px;padding:1px 6px;font-size:11px;background:#6b7280;color:#fff;border:none;border-radius:3px;cursor:pointer;">Reset Trail</button>
                         </div>

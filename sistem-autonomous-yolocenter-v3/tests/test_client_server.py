@@ -35,12 +35,31 @@ class ClientServerTest(unittest.TestCase):
 
         self.assertEqual(respons.status, 200)
         self.assertIn("disableLocalToggle", isi)
+        self.assertIn('id="kunciHeadingKompasToggle" type="checkbox" checked', isi)
 
     def test_health_client_terpisah(self):
         with urlopen(f"{self.alamat}/health", timeout=2) as respons:
             isi = json.loads(respons.read())
 
         self.assertEqual(isi, {"ok": True, "service": "asv-client"})
+
+    def test_secret_melayani_kendali_internal(self):
+        with urlopen(f"{self.alamat}/secret", timeout=2) as respons:
+            isi = respons.read().decode()
+
+        self.assertEqual(respons.status, 200)
+        self.assertIn("ASV Control Rahasia", isi)
+        self.assertIn("/secret.js", isi)
+
+        for aset in ("/secret.css", "/secret.js", "/index.html"):
+            with self.subTest(aset=aset), urlopen(f"{self.alamat}{aset}", timeout=2) as respons:
+                self.assertEqual(respons.status, 200)
+
+    def test_secret_html_dan_sumber_server_tidak_dapat_diakses_langsung(self):
+        for jalur in ("/secret.html", "/server_client.py"):
+            with self.subTest(jalur=jalur), self.assertRaises(HTTPError) as galat:
+                urlopen(f"{self.alamat}{jalur}", timeout=2)
+            self.assertEqual(galat.exception.code, 404)
 
     def test_daftar_direktori_ditolak(self):
         with self.assertRaises(HTTPError) as galat:

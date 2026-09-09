@@ -13,6 +13,7 @@ const LOCAL_STATE_STALE_MS = 3000;
 const DEBUG_ACTIVE = true;
 const disableInput = true;
 const disableLocal = true;
+let kunciHeadingKompas = true;
 const MQTT_LIBRARY_URL = "https://unpkg.com/mqtt@5/dist/mqtt.min.js";
 const KUNCI_DISABLE_LOCAL = "asv-disable-local-state";
 const MAP_CENTER = [-7.069219, 110.304997];
@@ -101,6 +102,7 @@ function pasangPenjagaInput() {
     if (!disableInput) return;
     const kontrolDiizinkan = new Set([
         "disableLocalToggle",
+        "kunciHeadingKompasToggle",
         "recenterMapBtn",
         "clearTrailBtn"
     ]);
@@ -610,6 +612,15 @@ function initComponents() {
         disableLocalToggle.onchange = () => aturDisableLocal(disableLocalToggle.checked);
     }
 
+    const kunciHeadingToggle = byId("kunciHeadingKompasToggle");
+    if (kunciHeadingToggle) {
+        kunciHeadingToggle.checked = kunciHeadingKompas;
+        kunciHeadingToggle.onchange = () => {
+            kunciHeadingKompas = kunciHeadingToggle.checked;
+            perbaruiRotasiPeta(boatHeading);
+        };
+    }
+
     const commands = {
         armBtn: { command: "arm", action: "arm" },
         disarmBtn: { command: "arm", action: "disarm" },
@@ -706,11 +717,17 @@ function updateBoatMarker(heading) {
     boatMarker.setLatLng([lat, lon]);
     boatHeading = heading;
     boatMarker.setRotation(boatHeading);
+    perbaruiRotasiPeta(boatHeading);
 
     if (!hasCenteredOnBoat) {
         map.panTo([lat, lon]);
         hasCenteredOnBoat = true;
     }
+}
+
+function perbaruiRotasiPeta(heading) {
+    if (!map) return;
+    map.setBearing(kunciHeadingKompas ? number(heading) : 0);
 }
 
 function posisiPetaSekarang() {
