@@ -629,6 +629,21 @@
   Polygon.prototype.setLatLngs = function (a) { this._pts = (a || []).map(LL); if (this._map) this._map._schedule(); return this; };
   Polygon.prototype.getLatLngs = function () { return this._pts.map(function (p) { return { lat: p.lat, lng: p.lng }; }); };
 
+  function removeVector() {
+    if (!this._map) return this;
+    if (this._node && this._node.parentNode) this._node.parentNode.removeChild(this._node);
+    this._map._vectors = this._map._vectors.filter(function (vector) {
+      return vector !== this;
+    }, this);
+    this._map = null;
+    return this;
+  }
+
+  Polyline.prototype.remove = removeVector;
+  Circle.prototype.remove = removeVector;
+  Rectangle.prototype.remove = removeVector;
+  Polygon.prototype.remove = removeVector;
+
   // =====================================================================
   //  FACTORY (Leaflet-style: RotaMap.map(), RotaMap.marker(), ...)
   // =====================================================================

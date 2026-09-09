@@ -54,9 +54,11 @@ Isi yang boleh disimpan:
 - `home`
 - `loggerActive`
 - `tahan_foto`
+- `missionState`, status trigger arena dari command misi, bukan mode kendaraan
 - `mission.waypoints`
 - `foto.atas` dan `foto.bawah`, berisi status ketersediaan dan revisi
 - `arena.posisi_acuan`, berisi titik mulai arena, GPS, dan heading yang dikunci otomatis saat misi mulai
+- `arena.set_dock_sekarang`, berisi latitude dan longitude saat trigger mulai diterima
 - `arena.acuan_terkunci`, mencegah acuan berubah selama satu sesi misi
 
 Semua baca/tulis harus melalui singleton `state` dari `mod05_state_manager.py`. Penulisan memakai file sementara lalu `os.replace`, sehingga JSON tidak setengah tertulis ketika listrik atau proses terputus.
@@ -105,18 +107,20 @@ Pemilihan pasangan buoy saat ini masih berdasarkan bbox terbesar per warna, buka
 5. Perintah operator dikirim ke `POST /api/command` pada HTTP aktif: lokal memakai `http://IP:8766`, cloud memakai `https://robot.neiaozora.my.id`.
 6. Toggle `Disable Local` menutup dan menghentikan reconnect WebSocket telemetri lokal, memakai state MQTT cloud, serta mengarahkan foto dan command ke HTTP robot melalui Cloudflare Tunnel. Pilihan disimpan di browser; protokol foto dan command tetap HTTP, bukan MQTT.
 7. `disableInput=true` menjadikan dashboard hanya-pantau. Semua kontrol menampilkan pesan penolakan kecuali `Disable Local`, `Center ASV`, dan `Reset Server History` untuk trajectory.
-8. Peta dapat ditampilkan sampai zoom 22, tetapi OSM hanya diminta sampai native zoom 19. `rotamap.js` memperbesar tile z19 secara lokal pada zoom 20–22 sehingga tidak meminta tile yang tidak tersedia. Google Satellite bersifat opsional melalui `pakaiGoogleSatellite=true`, memakai endpoint tile publik `mt1.google.com` tanpa API key, dan memakai native zoom 20 sebelum diperbesar lokal.
+8. `disableLocal=true` hanya memasang atribut `disabled` pada checkbox. Nilai checked dan pilihan sumber local/cloud tidak diubah oleh variabel tersebut.
+9. Peta dapat ditampilkan sampai zoom 22, tetapi OSM hanya diminta sampai native zoom 19. `rotamap.js` memperbesar tile z19 secara lokal pada zoom 20–22 sehingga tidak meminta tile yang tidak tersedia. Google Satellite bersifat opsional melalui `pakaiGoogleSatellite=true`, memakai endpoint tile publik `mt1.google.com` tanpa API key, dan memakai native zoom 20 sebelum diperbesar lokal.
 
 ### Aliran arena dan trajectory
 
-1. Tidak ada API atau command untuk mengatur posisi awal. Arena worker membaca status misi langsung dari hot data MAVLink.
-2. `MISSION_CURRENT.mission_state=ACTIVE` menjadi sumber utama. Jika field itu tidak tersedia, kondisi nyata `Armed + AUTO` menjadi fallback.
-3. Pada transisi misi menjadi aktif, worker mengambil `titik_mulai` arena aktif, GPS, dan heading MAVLink saat itu lalu menyimpannya ke `arena.posisi_acuan` melalui state manager dan file lock.
-4. `arena.acuan_terkunci=true` mempertahankan acuan yang sama selama misi. Pause atau hold tidak mengubahnya; complete, stop, atau disarm membuka kunci untuk misi berikutnya.
-5. `VirtualGPSMapper` mengubah GPS terbaru menjadi `arena.posisi_sekarang`. Riwayat hanya bertambah saat misi berstatus berjalan.
-6. JSON `/local_scope/arena/state` membawa arena A/B, arena aktif, status sesi, posisi sekarang, riwayat, acuan, dan galat. GUI-state menggabungkannya ke snapshot frontend/MQTT.
-7. Dashboard hanya membaca `state.arena`, menggambar posisi sekarang dan trajectory dari `lat/lon`, tanpa menghitung transformasi koordinat.
-8. Satu-satunya command yang diproses arena worker adalah `clear_history`, khusus untuk mengosongkan gambar trajectory.
+1. Tidak ada API atau command untuk mengatur koordinat acuan secara manual.
+2. Command misi `start`, `pause`, dan `stop` memperbarui cold state `missionState`. Mode kendaraan `MANUAL`, `AUTO`, status arm, dan `MISSION_CURRENT` tidak menentukan apakah arena berjalan.
+3. Pada transisi `missionState=RUNNING`, worker mengambil `titik_mulai` arena aktif, GPS, dan yaw saat itu. Latitude/longitude juga disimpan sebagai `arena.set_dock_sekarang`.
+4. `arena.acuan_terkunci=true` mempertahankan acuan yang sama selama sesi. Pause mempertahankan kunci; stop atau reset membuka kunci untuk sesi berikutnya.
+5. `VirtualGPSMapper` menghasilkan `arena.posisi_sekarang`, trajectory, serta `arena.visualisasi` yang berisi batas, kotak, buoy merah/hijau, dan docking dalam koordinat GPS siap gambar.
+6. Riwayat hanya bertambah ketika `missionState=RUNNING`.
+7. JSON `/local_scope/arena/state` membawa arena A/B, arena aktif, status sesi, posisi sekarang, riwayat, visualisasi, acuan, dan galat. GUI-state menggabungkannya ke snapshot frontend/MQTT.
+8. Dashboard hanya menggambar data `state.arena`; transformasi koordinat virtual ke GPS dilakukan backend.
+9. Satu-satunya command tambahan yang diproses langsung arena worker adalah `clear_history`.
 
 API GET internal untuk debugging foto berada pada HTTP robot yang sama:
 

@@ -21,6 +21,10 @@ class StatePalsu:
         self.data["arena"]["acuan_terkunci"] = bool(terkunci)
         if acuan is not None:
             self.data["arena"]["posisi_acuan"] = copy.deepcopy(acuan)
+            self.data["arena"]["set_dock_sekarang"] = {
+                "lat": float(acuan["lat"]),
+                "lon": float(acuan["lon"]),
+            }
         return copy.deepcopy(self.data)
 
 
@@ -78,13 +82,14 @@ class ArenaWorkerTest(unittest.TestCase):
         })
         self.worker._sinkron_cold()
 
-    def test_misi_mavlink_mengunci_titik_mulai_dan_heading(self):
-        self.worker._terima_mavlink("/tes/mavlink", {
-            "missionState": "RUNNING",
-            "mode": "AUTO",
-            "arm": "Armed",
-        })
+    def atur_status_arena(self, status):
+        self.state.data["missionState"] = status
+        self.worker.waktu_baca_cold = 0.0
+        self.worker._sinkron_cold()
         self.worker._sinkron_status_misi()
+
+    def test_trigger_misi_mengunci_dock_tanpa_peduli_mode(self):
+        self.atur_status_arena("RUNNING")
         self.worker._perbarui_posisi()
         arena = self.worker.snapshot()["arena"]
 
@@ -94,17 +99,13 @@ class ArenaWorkerTest(unittest.TestCase):
         self.assertEqual(arena["posisi_sekarang"]["y"], 0.0)
         self.assertEqual(arena["posisi_acuan"]["heading"], 90.0)
         self.assertEqual(arena["posisi_acuan"]["arena"], "A")
+        self.assertEqual(arena["set_dock_sekarang"], {"lat": -7.0, "lon": 110.0})
         self.assertEqual(len(arena["riwayat_pergerakan"]), 1)
         self.assertIn("A", arena)
         self.assertIn("B", arena)
 
     def test_acuan_tidak_berubah_selama_misi_berjalan(self):
-        self.worker._terima_mavlink("/tes/mavlink", {
-            "missionState": "RUNNING",
-            "mode": "AUTO",
-            "arm": "Armed",
-        })
-        self.worker._sinkron_status_misi()
+        self.atur_status_arena("RUNNING")
         acuan_awal = copy.deepcopy(self.state.data["arena"]["posisi_acuan"])
 
         self.worker._terima_mavlink("/tes/mavlink", {
@@ -115,19 +116,11 @@ class ArenaWorkerTest(unittest.TestCase):
         self.assertEqual(self.state.data["arena"]["posisi_acuan"], acuan_awal)
 
     def test_restart_worker_di_tengah_misi_memakai_acuan_yang_sama(self):
-        self.worker._terima_mavlink("/tes/mavlink", {
-            "missionState": "RUNNING",
-            "mode": "AUTO",
-            "arm": "Armed",
-        })
-        self.worker._sinkron_status_misi()
+        self.atur_status_arena("RUNNING")
         acuan_awal = copy.deepcopy(self.state.data["arena"]["posisi_acuan"])
 
         worker_baru = self.modul.ArenaWorker(self.state, TopikPalsu())
         worker_baru._terima_mavlink("/tes/mavlink", {
-            "missionState": "RUNNING",
-            "mode": "AUTO",
-            "arm": "Armed",
             "gps": {
                 "fix": True,
                 "lat": -7.001,
@@ -141,28 +134,16 @@ class ArenaWorkerTest(unittest.TestCase):
         self.assertEqual(self.state.data["arena"]["posisi_acuan"], acuan_awal)
 
     def test_jeda_mempertahankan_kunci_dan_selesai_membukanya(self):
-        self.worker._terima_mavlink("/tes/mavlink", {
-            "missionState": "RUNNING",
-            "mode": "AUTO",
-            "arm": "Armed",
-        })
-        self.worker._sinkron_status_misi()
+        self.atur_status_arena("RUNNING")
 
-        self.worker._terima_mavlink("/tes/mavlink", {"missionState": "PAUSED"})
-        self.worker._sinkron_status_misi()
+        self.atur_status_arena("PAUSED")
         self.assertTrue(self.state.data["arena"]["acuan_terkunci"])
 
-        self.worker._terima_mavlink("/tes/mavlink", {"missionState": "COMPLETED"})
-        self.worker._sinkron_status_misi()
+        self.atur_status_arena("STOPPED")
         self.assertFalse(self.state.data["arena"]["acuan_terkunci"])
 
     def test_clear_history_tidak_menghapus_posisi_sekarang(self):
-        self.worker._terima_mavlink("/tes/mavlink", {
-            "missionState": "RUNNING",
-            "mode": "AUTO",
-            "arm": "Armed",
-        })
-        self.worker._sinkron_status_misi()
+        self.atur_status_arena("RUNNING")
         self.worker._perbarui_posisi()
 
         self.worker._terima_perintah("/tes/perintah", {"command": "clear_history"})
@@ -171,20 +152,30 @@ class ArenaWorkerTest(unittest.TestCase):
         self.assertEqual(arena["riwayat_pergerakan"], [])
         self.assertIsNotNone(arena["posisi_sekarang"])
 
-    def test_disarm_mengakhiri_status_running_yang_tertinggal(self):
+    def test_mode_dan_arm_tidak_menghentikan_arena(self):
+        self.atur_status_arena("RUNNING")
+
         self.worker._terima_mavlink("/tes/mavlink", {
-            "missionState": "RUNNING",
-            "mode": "AUTO",
-            "arm": "Armed",
+            "arm": "Disarmed",
+            "mode": "MANUAL",
         })
         self.worker._sinkron_status_misi()
 
-        self.worker._terima_mavlink("/tes/mavlink", {"arm": "Disarmed"})
-        self.worker._sinkron_status_misi()
-
         arena = self.worker.snapshot()["arena"]
-        self.assertFalse(arena["dimulai"])
-        self.assertEqual(arena["status"], "berhenti")
+        self.assertTrue(arena["dimulai"])
+        self.assertEqual(arena["status"], "berjalan")
+
+    def test_visualisasi_memuat_batas_buoy_kotak_dan_docking(self):
+        self.atur_status_arena("RUNNING")
+        visualisasi = self.worker.snapshot()["arena"]["visualisasi"]
+
+        self.assertEqual(visualisasi["nama"], "A")
+        self.assertEqual(len(visualisasi["batas"]), 4)
+        self.assertEqual(len(visualisasi["buoy"]["merah"]), 10)
+        self.assertEqual(len(visualisasi["buoy"]["hijau"]), 10)
+        self.assertEqual(len(visualisasi["docking"]), 3)
+        self.assertIn("lat", visualisasi["kotak"]["biru"])
+        self.assertIn("lon", visualisasi["kotak"]["biru"])
 
 if __name__ == "__main__":
     unittest.main()

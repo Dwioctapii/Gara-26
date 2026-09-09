@@ -1,4 +1,4 @@
-"""Pemetaan arena yang dikunci otomatis saat misi MAVLink dimulai."""
+"""Pemetaan arena yang dikunci saat status arena mulai berjalan."""
 
 from __future__ import annotations
 
@@ -30,7 +30,7 @@ def _gabungkan(target: dict[str, Any], perubahan: dict[str, Any]) -> None:
 
 
 class ArenaWorker:
-    """Mengunci mapper dari MAVLink dan menerbitkan satu JSON arena lengkap."""
+    """Mengubah arena aktif menjadi JSON GPS siap gambar untuk frontend."""
 
     def __init__(self, penyimpan=state, topik=robot_topic) -> None:
         self.penyimpan = penyimpan
@@ -67,39 +67,17 @@ class ArenaWorker:
     @staticmethod
     def _heading_derajat(mavlink: dict[str, Any]) -> float:
         gps = mavlink.get("gps", {})
-        if gps.get("heading") is not None:
-            return float(gps["heading"]) % 360.0
         orientasi = mavlink.get("orientation", {})
         if orientasi.get("z") is not None:
             return math.degrees(float(orientasi["z"])) % 360.0
         return float(gps.get("cog", 0.0)) % 360.0
 
     @staticmethod
-    def _baca_status_operasi(mavlink: dict[str, Any]) -> str:
-        if mavlink.get("connected") is False:
-            return "jeda"
-
-        status_arm = str(mavlink.get("arm", "")).lower()
-        if status_arm == "disarmed":
-            return "berhenti"
-
-        status = str(
-            mavlink.get("missionState")
-            or mavlink.get("mission", {}).get("state")
-            or ""
-        ).upper()
-        if status in {"RUNNING", "ACTIVE"}:
+    def _baca_status_operasi(data_cold: dict[str, Any]) -> str:
+        status = str(data_cold.get("missionState", "IDLE")).upper()
+        if status == "RUNNING":
             return "berjalan"
         if status in {"PAUSED", "HOLDING"}:
-            return "jeda"
-        if status in {"IDLE", "STOPPED", "COMPLETED", "COMPLETE"}:
-            return "berhenti"
-
-        bersenjata = status_arm == "armed"
-        mode = str(mavlink.get("mode", "")).upper()
-        if bersenjata and mode == "AUTO":
-            return "berjalan"
-        if bersenjata:
             return "jeda"
         return "berhenti"
 
@@ -156,13 +134,14 @@ class ArenaWorker:
             self._pasang_mapper(acuan)
             self.riwayat.clear()
             self.galat = None
-        pencatat.info("Acuan arena %s dikunci dari awal misi MAVLink", nama_arena)
+        pencatat.info("Dock arena %s dikunci saat arena mulai", nama_arena)
 
     def _sinkron_status_misi(self) -> None:
         with self.kunci:
             mavlink = copy.deepcopy(self.data_mavlink)
-            arena_cold = copy.deepcopy(self.data_cold.get("arena", {}))
-        status = self._baca_status_operasi(mavlink)
+            data_cold = copy.deepcopy(self.data_cold)
+        arena_cold = data_cold.get("arena", {})
+        status = self._baca_status_operasi(data_cold)
         terkunci = bool(arena_cold.get("acuan_terkunci"))
 
         with self.kunci:
@@ -182,6 +161,51 @@ class ArenaWorker:
             with self.kunci:
                 self.data_cold = data
             pencatat.info("Sesi arena selesai; acuan dibuka untuk misi berikutnya")
+
+    @staticmethod
+    def _titik_gps(mapper: VirtualGPSMapper, titik: dict[str, Any]) -> dict[str, Any]:
+        hasil = copy.deepcopy(titik)
+        lat, lon = mapper.virtual_to_gps(float(titik["x"]), float(titik["y"]))
+        hasil["lat"] = round(lat, 8)
+        hasil["lon"] = round(lon, 8)
+        return hasil
+
+    def _buat_visualisasi(self) -> dict[str, Any] | None:
+        with self.kunci:
+            mapper = self.mapper
+            nama_arena = self.data_cold.get("currentTrack", "A")
+            arena = copy.deepcopy(self.data_cold.get("arena", {}).get(nama_arena))
+        if mapper is None or not isinstance(arena, dict):
+            return None
+
+        visualisasi = {
+            "nama": nama_arena,
+            "dimensi": copy.deepcopy(arena.get("dimensi", {})),
+            "titik_mulai": self._titik_gps(mapper, arena["titik_mulai"]),
+            "kotak": {},
+            "buoy": {},
+            "docking": [],
+        }
+        for warna, titik in arena.get("kotak", {}).items():
+            visualisasi["kotak"][warna] = self._titik_gps(mapper, titik)
+        for warna, daftar_titik in arena.get("buoy", {}).items():
+            visualisasi["buoy"][warna] = [
+                self._titik_gps(mapper, titik)
+                for titik in daftar_titik
+            ]
+        visualisasi["docking"] = [
+            self._titik_gps(mapper, titik)
+            for titik in arena.get("docking", [])
+        ]
+
+        dimensi = arena.get("dimensi", {})
+        lebar = float(dimensi.get("lebar_arena", 30.0))
+        tinggi = float(dimensi.get("tinggi_arena", 30.0))
+        visualisasi["batas"] = [
+            self._titik_gps(mapper, {"x": x, "y": y})
+            for x, y in ((0, 0), (lebar, 0), (lebar, tinggi), (0, tinggi))
+        ]
+        return visualisasi
 
     def _perbarui_posisi(self) -> None:
         with self.kunci:
@@ -221,6 +245,7 @@ class ArenaWorker:
         )
 
     def snapshot(self) -> dict[str, Any]:
+        visualisasi = self._buat_visualisasi()
         with self.kunci:
             arena = copy.deepcopy(self.data_cold.get("arena", {}))
             arena.update({
@@ -230,6 +255,7 @@ class ArenaWorker:
                 "status": self.status_operasi,
                 "posisi_sekarang": copy.deepcopy(self.posisi_sekarang),
                 "riwayat_pergerakan": list(copy.deepcopy(self.riwayat)),
+                "visualisasi": visualisasi,
                 "galat": self.galat,
             })
         return {"arena": arena}

@@ -58,6 +58,23 @@ class StateManagerTest(unittest.TestCase):
             self.assertEqual(acuan["y"], 3.0)
             self.assertEqual(acuan["heading"], 90.0)
             self.assertEqual(acuan["arena"], "B")
+            self.assertEqual(
+                arena["set_dock_sekarang"],
+                {"lat": -7.1, "lon": 110.3},
+            )
+
+    def test_trigger_misi_disimpan_tanpa_bergantung_mode_mavlink(self):
+        with tempfile.TemporaryDirectory() as direktori:
+            state = StateManager(Path(direktori) / "state.json")
+
+            state.terapkan_perintah({"command": "mission", "action": "start"})
+            self.assertEqual(state.baca()["missionState"], "RUNNING")
+
+            state.terapkan_perintah({"command": "mission", "action": "pause"})
+            self.assertEqual(state.baca()["missionState"], "PAUSED")
+
+            state.terapkan_perintah({"command": "mission", "action": "stop"})
+            self.assertEqual(state.baca()["missionState"], "STOPPED")
 
     def test_cold_state_tersimpan_dan_dimuat_ulang(self):
         with tempfile.TemporaryDirectory() as direktori:

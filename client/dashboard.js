@@ -65,9 +65,7 @@ let mqttLibraryPromise = null;
 let lastLocalStateAt = 0;
 let dataSocketOpenedAt = 0;
 let stateMqttTerakhir = null;
-let lokalDinonaktifkan = disableLocal
-    ? false
-    : HALAMAN_HTTPS || bacaPilihanDisableLocal();
+let lokalDinonaktifkan = HALAMAN_HTTPS || bacaPilihanDisableLocal();
 const photoRetryAt = { atas: 0, bawah: 0 };
 
 // Map & Visualization Layers
@@ -77,12 +75,14 @@ let boatIcon = null;
 let boatHeading = 0;
 let missionRouteLine = null;
 let trajectoryLine = null;
+let arenaLayers = [];
 let waypointMarkers = [];
 let activeWpCircle = null;
 let hasCenteredOnBoat = false;
 let lastRenderedWpSignature = "";
 let lastRenderedCurrentWp = -1;
 let lastTrajectorySignature = "";
+let lastArenaSignature = "";
 
 // Compass
 let compassReady = false;
@@ -328,8 +328,8 @@ function perbaruiToggleSumber() {
     const toggle = byId("disableLocalToggle");
     const pembungkus = byId("disableLocalControl");
     if (toggle) {
-        toggle.checked = !disableLocal && lokalDinonaktifkan;
-        toggle.disabled = disableLocal || HALAMAN_HTTPS;
+        toggle.checked = lokalDinonaktifkan;
+        toggle.disabled = disableLocal;
     }
     if (pembungkus) pembungkus.classList.toggle("active", lokalDinonaktifkan);
     if (pembungkus && disableLocal) {
@@ -340,11 +340,6 @@ function perbaruiToggleSumber() {
 }
 
 function aturDisableLocal(dinonaktifkan) {
-    if (disableLocal) {
-        lokalDinonaktifkan = false;
-        perbaruiToggleSumber();
-        return;
-    }
     lokalDinonaktifkan = HALAMAN_HTTPS || Boolean(dinonaktifkan);
     simpanPilihanDisableLocal();
     perbaruiToggleSumber();
@@ -558,6 +553,7 @@ function render() {
 
     updateCompass(heading);
     renderDataBoxes(heading);
+    updateArenaVisualization();
     updateBoatMarker(heading);
     updateTrajectory();
     updateWaypoints();
@@ -740,6 +736,81 @@ function updateTrajectory() {
         .map(titik => [titik.lat, titik.lon]);
     trajectoryLine.setLatLngs(titikPeta);
     lastTrajectorySignature = signature;
+}
+
+function hapusVisualisasiArena() {
+    arenaLayers.forEach(layer => {
+        if (layer && typeof layer.remove === "function") layer.remove();
+    });
+    arenaLayers = [];
+}
+
+function titikPetaArena(titik) {
+    if (!titik || titik.lat == null || titik.lon == null) return null;
+    return [Number(titik.lat), Number(titik.lon)];
+}
+
+function tambahTitikArena(titik, warna, radius) {
+    const posisi = titikPetaArena(titik);
+    if (!posisi) return;
+    arenaLayers.push(RotaMap.circle(posisi, {
+        radius,
+        color: warna,
+        fillColor: warna,
+        fillOpacity: 0.85,
+        weight: 2,
+        minRadiusPx: 4
+    }).addTo(map));
+}
+
+function updateArenaVisualization() {
+    if (!map) return;
+    const visualisasi = state.arena && state.arena.visualisasi;
+    const signature = visualisasi ? JSON.stringify(visualisasi) : "";
+    if (signature === lastArenaSignature) return;
+
+    hapusVisualisasiArena();
+    lastArenaSignature = signature;
+    if (!visualisasi) return;
+
+    const batas = Array.isArray(visualisasi.batas)
+        ? visualisasi.batas.map(titikPetaArena).filter(Boolean)
+        : [];
+    if (batas.length >= 3) {
+        arenaLayers.push(RotaMap.polygon(batas, {
+            color: "#38bdf8",
+            weight: 2,
+            fillColor: "#0ea5e9",
+            fillOpacity: 0.06,
+            dashArray: "8,5"
+        }).addTo(map));
+    }
+
+    const radiusBuoy = number(
+        visualisasi.dimensi && visualisasi.dimensi.radius_buoy,
+        0.15
+    );
+    const warnaBuoy = { merah: "#ef4444", hijau: "#22c55e" };
+    Object.entries(visualisasi.buoy || {}).forEach(([warna, daftar]) => {
+        (daftar || []).forEach(titik => {
+            tambahTitikArena(titik, warnaBuoy[warna] || "#e2e8f0", radiusBuoy);
+        });
+    });
+
+    (visualisasi.docking || []).forEach(titik => {
+        tambahTitikArena(titik, "#f59e0b", radiusBuoy);
+    });
+
+    const warnaKotak = {
+        merah: "#dc2626",
+        hijau: "#16a34a",
+        biru: "#2563eb"
+    };
+    Object.entries(visualisasi.kotak || {}).forEach(([warna, titik]) => {
+        tambahTitikArena(titik, warnaKotak[warna] || "#ffffff", 0.35);
+    });
+
+    tambahTitikArena(visualisasi.titik_mulai, "#ffffff", 0.5);
 }
 
 function updateWaypoints() {

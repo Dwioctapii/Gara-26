@@ -100,6 +100,10 @@ class StateManager:
         hasil["timestamp"] = float(posisi.get("timestamp", time.time()))
         hasil["arena"] = str(posisi.get("arena", "A"))
         perubahan["posisi_acuan"] = hasil
+        perubahan["set_dock_sekarang"] = {
+            "lat": hasil["lat"],
+            "lon": hasil["lon"],
+        }
         return self.perbarui({"arena": perubahan})
 
     def status_foto(self) -> dict[str, Any]:
@@ -165,6 +169,14 @@ class StateManager:
             perubahan["home"] = {"lat": float(home["lat"]), "lon": float(home["lon"])}
         elif nama == "logger" and perintah.get("action") in {"start", "stop"}:
             perubahan["loggerActive"] = perintah["action"] == "start"
+        elif nama == "mission" and perintah.get("action") in {"start", "pause", "stop"}:
+            perubahan["missionState"] = {
+                "start": "RUNNING",
+                "pause": "PAUSED",
+                "stop": "STOPPED",
+            }[perintah["action"]]
+        elif nama == "reset_mission":
+            perubahan["missionState"] = "IDLE"
 
         return self.perbarui(perubahan) if perubahan else self.baca()
 

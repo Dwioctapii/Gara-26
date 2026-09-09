@@ -110,6 +110,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "_version": 0,
     },
     "currentTrack": "A",
+    "missionState": "IDLE",
     "home": None,
     "loggerActive": False,
     "tahan_foto": False,
@@ -120,6 +121,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "A": copy.deepcopy(ARENA_A),
         "B": copy.deepcopy(ARENA_B),
         "posisi_acuan": None,
+        "set_dock_sekarang": None,
         "acuan_terkunci": False,
     },
     "foto": {
@@ -145,7 +147,6 @@ DEFAULT_HOT_DATA: dict[str, Any] = {
         "lon": None,
         "sog": 0.0,
         "cog": 0.0,
-        "heading": None,
         "satellites": 0,
         "hdop": 99.9,
         "fix": False,

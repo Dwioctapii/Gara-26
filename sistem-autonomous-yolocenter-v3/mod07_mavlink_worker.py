@@ -129,16 +129,8 @@ class MavlinkWorker:
 
         elif tipe_pesan == "GLOBAL_POSITION_INT":
             kecepatan = math.hypot(pesan.vx / 100.0, pesan.vy / 100.0)
-            data_gps = {
-                "lat": pesan.lat / 1e7,
-                "lon": pesan.lon / 1e7,
-                "fix": pesan.lat != 0 and pesan.lon != 0,
-            }
-            heading = getattr(pesan, "hdg", 65535)
-            if heading != 65535:
-                data_gps["heading"] = heading / 100.0
             self._publikasi({
-                "gps": data_gps,
+                "gps": {"lat": pesan.lat / 1e7, "lon": pesan.lon / 1e7, "fix": pesan.lat != 0 and pesan.lon != 0},
                 "linear": {"x": pesan.vx / 100.0, "y": pesan.vy / 100.0, "z": pesan.vz / 100.0},
                 "speed": kecepatan,
                 "position": {"z": pesan.relative_alt / 1000.0}
@@ -175,16 +167,6 @@ class MavlinkWorker:
             total = getattr(pesan, "total", 0)
             data_misi = {"mission": {"current": pesan.seq}}
             if total not in (0, 65535): data_misi["mission"]["total"] = total
-            status_misi = {
-                1: "IDLE",
-                2: "IDLE",
-                3: "RUNNING",
-                4: "PAUSED",
-                5: "COMPLETED",
-            }.get(getattr(pesan, "mission_state", 0))
-            if status_misi:
-                data_misi["mission"]["state"] = status_misi
-                data_misi["missionState"] = status_misi
             self._publikasi(data_misi)
 
         elif tipe_pesan == "MISSION_COUNT":
