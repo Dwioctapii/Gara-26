@@ -49,11 +49,17 @@ class ClientServerTest(unittest.TestCase):
 
         self.assertEqual(respons.status, 200)
         self.assertIn("ASV Control Rahasia", isi)
+        self.assertIn('id="statusState"', isi)
         self.assertIn("/secret.js", isi)
 
         for aset in ("/secret.css", "/secret.js", "/index.html"):
             with self.subTest(aset=aset), urlopen(f"{self.alamat}{aset}", timeout=2) as respons:
                 self.assertEqual(respons.status, 200)
+
+        with urlopen(f"{self.alamat}/secret.js", timeout=2) as respons:
+            javascript = respons.read().decode()
+        self.assertIn("/local_scope/gui/state", javascript)
+        self.assertIn("/sistem_broadcast/state_dan_variabel", javascript)
 
     def test_secret_html_dan_sumber_server_tidak_dapat_diakses_langsung(self):
         for jalur in ("/secret.html", "/server_client.py"):

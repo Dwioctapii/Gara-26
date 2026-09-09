@@ -110,7 +110,7 @@ Pemilihan pasangan buoy saat ini masih berdasarkan bbox terbesar per warna, buka
 7. `disableInput=true` menjadikan dashboard hanya-pantau. Semua kontrol menampilkan pesan penolakan kecuali `Disable Local`, `Lock Heading`, `Center ASV`, dan `Reset Server History` untuk trajectory.
 8. `disableLocal=true` hanya memasang atribut `disabled` pada checkbox. Nilai checked dan pilihan sumber local/cloud tidak diubah oleh variabel tersebut.
 9. Peta dapat ditampilkan sampai zoom 22, tetapi OSM hanya diminta sampai native zoom 19. `rotamap.js` memperbesar tile z19 secara lokal pada zoom 20–22 sehingga tidak meminta tile yang tidak tersedia. Google Satellite bersifat opsional melalui `pakaiGoogleSatellite=true`, memakai endpoint tile publik `mt1.google.com` tanpa API key, dan memakai native zoom 20 sebelum diperbesar lokal.
-10. Route `/secret` membuka panel “ASV Control Rahasia” tanpa tautan dari dashboard utama. `/secret.html`, source server, dan file lain di luar aset frontend yang diizinkan dikembalikan sebagai 404.
+10. Route `/secret` membuka panel “ASV Control Rahasia” tanpa tautan dari dashboard utama. Panel berlangganan GUI-state melalui WebSocket lokal atau topic MQTT cloud, menampilkan nilai backend, menandai tombol yang sedang aktif, dan membedakan respons antrean HTTP dari perubahan state yang telah terkonfirmasi. `/secret.html`, source server, dan file lain di luar aset frontend yang diizinkan dikembalikan sebagai 404.
 
 ### Aliran arena dan trajectory
 
