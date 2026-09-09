@@ -40,14 +40,14 @@ WS_HOST = BROKER_HOST
 WS_PORT = BROKER_PORT
 WS_HZ = float(os.getenv("ASV_BROADCAST_HZ", "10"))
 
-MQTT_HOST = os.getenv("ASV_MQTT_HOST", "")
+MQTT_HOST = os.getenv(
+    "ASV_MQTT_HOST",
+    "b786a44b5790491898b3c676180e7862.s1.eu.hivemq.cloud",
+)
 MQTT_PORT = int(os.getenv("ASV_MQTT_PORT", "8883"))
-MQTT_USER = os.getenv("ASV_MQTT_USER", "")
-MQTT_PASS = os.getenv("ASV_MQTT_PASS", "")
-MQTT_ENABLED = os.getenv(
-    "ASV_ENABLE_MQTT",
-    "1" if MQTT_HOST and MQTT_USER and MQTT_PASS else "0",
-) == "1"
+MQTT_USER = os.getenv("ASV_MQTT_USER", "noxindocraft")
+MQTT_PASS = os.getenv("ASV_MQTT_PASS", "Zancraft1&")
+MQTT_ENABLED = os.getenv("ASV_ENABLE_MQTT", "1") == "1"
 
 CAM_ATAS_INDEX = int(os.getenv("ASV_CAM_ATAS_INDEX", "0"))
 CAM_BAWAH_INDEX = int(os.getenv("ASV_CAM_BAWAH_INDEX", "2"))
@@ -106,4 +106,4 @@ GREEN_BUOY_MIN_AREA = int(os.getenv("ASV_GREEN_MIN_AREA", "800"))
 SERVO_SEARCH_OFFSET = int(os.getenv("ASV_SERVO_SEARCH_OFFSET", "200"))
 
 # ─── Catatan ──────────────────────────────────────────────────────────────────
-# Kredensial MQTT wajib diberikan melalui environment variable ASV_MQTT_*.
+# Nilai MQTT bawaan berada di file ini. Environment ASV_MQTT_* hanya override.

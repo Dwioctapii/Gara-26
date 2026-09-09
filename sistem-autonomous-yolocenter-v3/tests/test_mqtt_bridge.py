@@ -17,6 +17,8 @@ class MqttBridgeTest(unittest.TestCase):
         modul_client = types.ModuleType("paho.mqtt.client")
         modul_client.CallbackAPIVersion = types.SimpleNamespace(VERSION2=2)
         modul_client.MQTTv311 = 4
+        modul_client.MQTT_ERR_SUCCESS = 0
+        modul_client.error_string = lambda kode: f"galat-{kode}"
         modul_paho.mqtt = modul_mqtt
         modul_mqtt.client = modul_client
 
@@ -91,9 +93,21 @@ class MqttBridgeTest(unittest.TestCase):
         self.assertTrue(client.loop_dimulai)
         pembuat_utas.assert_called_once()
 
+    def test_client_paho_lama_tidak_memerlukan_callback_api_version(self):
+        pembuat_client = unittest.mock.Mock(return_value=object())
+        with patch.object(self.modul.mqtt, "CallbackAPIVersion", None):
+            with patch.object(self.modul.mqtt, "Client", pembuat_client, create=True):
+                self.modul.MqttBridge._buat_client("client-lama")
+
+        pembuat_client.assert_called_once_with(
+            client_id="client-lama",
+            protocol=self.modul.mqtt.MQTTv311,
+        )
+
     def test_state_dipublikasikan_utuh_ke_cloud_dengan_qos_nol(self):
         class HasilPublikasi:
             mid = 7
+            rc = 0
 
         class ClientPalsu:
             def publish(self, topik, payload, qos, retain):
@@ -118,6 +132,28 @@ class MqttBridgeTest(unittest.TestCase):
         self.assertEqual(json.loads(payload), state)
         self.assertEqual(qos, 0)
         self.assertFalse(dipertahankan)
+
+    def test_publish_gagal_tidak_menghentikan_worker(self):
+        class HasilPublikasi:
+            mid = 8
+            rc = 4
+
+        class ClientPalsu:
+            def publish(self, *_args, **_kwargs):
+                return HasilPublikasi()
+
+        jembatan = self.modul.MqttBridge()
+        jembatan.client = ClientPalsu()
+        jembatan.connected.set()
+
+        with patch.object(self.modul, "_debug") as debug:
+            jembatan._publish_json("/tes", {"nilai": 1})
+
+        debug.assert_called_once_with(
+            "MQTT-PUB",
+            "queue_failed",
+            {"topic": "/tes", "reason": "galat-4"},
+        )
 
 
 if __name__ == "__main__":

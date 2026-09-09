@@ -8,6 +8,12 @@ import main
 
 
 class ProcessSupervisorTest(unittest.TestCase):
+    def test_mqtt_aktif_secara_default(self):
+        self.assertTrue(main.config.MQTT_ENABLED)
+        self.assertTrue(main.config.MQTT_HOST)
+        self.assertTrue(main.config.MQTT_USER)
+        self.assertTrue(main.config.MQTT_PASS)
+
     def test_mqtt_mengikuti_konfigurasi_default(self):
         with patch.object(sys, "argv", ["main.py"]):
             with patch.object(main, "jalankan", return_value=0) as jalankan:

@@ -162,7 +162,11 @@ Backend tanpa jendela GUI:
 python main.py --tanpa-gui
 ```
 
-MQTT aktif otomatis jika `ASV_MQTT_HOST`, `ASV_MQTT_USER`, dan `ASV_MQTT_PASS` tersedia. Jika environment variable tidak diberikan, v3 membaca pasangan `hivemq_url`, `port`, `username`, dan `password` dari `../config.txt`.
+MQTT HiveMQ aktif secara default memakai nilai bawaan `mod01_config.py`. Environment variable `ASV_MQTT_HOST`, `ASV_MQTT_PORT`, `ASV_MQTT_USER`, dan `ASV_MQTT_PASS` hanya dipakai sebagai override; runtime tidak membaca `config.txt`.
+
+Putus internet tidak menghentikan worker MQTT. Paho menunggu dan mencoba koneksi kembali, sedangkan worker lokal lain tetap berjalan. Gunakan `ASV_ENABLE_MQTT=0` atau `--tanpa-mqtt` jika MQTT memang ingin dimatikan.
+
+Bridge MQTT menerima Paho 1.x maupun 2.x agar instalasi Python 3.8 lama di Jetson tidak membuat worker berhenti saat pembuatan client.
 
 ```powershell
 python main.py

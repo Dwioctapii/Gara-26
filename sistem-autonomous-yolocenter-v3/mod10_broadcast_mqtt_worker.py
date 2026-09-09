@@ -38,11 +38,7 @@ class MqttBridge:
         robot_topic.mulai()
 
         client_id = f"asv-backend-{socket.gethostname()}-{os.getpid()}"
-        self.client = mqtt.Client(
-            mqtt.CallbackAPIVersion.VERSION2,
-            client_id=client_id,
-            protocol=mqtt.MQTTv311,
-        )
+        self.client = self._buat_client(client_id)
         self.client.username_pw_set(config.MQTT_USER, config.MQTT_PASS)
         self.client.tls_set()
         self.client.reconnect_delay_set(min_delay=1, max_delay=30)
@@ -62,6 +58,17 @@ class MqttBridge:
             "client_id": client_id,
         })
 
+    @staticmethod
+    def _buat_client(client_id):
+        versi_callback = getattr(mqtt, "CallbackAPIVersion", None)
+        if versi_callback is None:
+            return mqtt.Client(client_id=client_id, protocol=mqtt.MQTTv311)
+        return mqtt.Client(
+            versi_callback.VERSION2,
+            client_id=client_id,
+            protocol=mqtt.MQTTv311,
+        )
+
     def stop(self):
         self.stop_event.set()
         if self.client:
@@ -74,7 +81,7 @@ class MqttBridge:
             self.state_terakhir = data
 
     # ---- Callbacks ----
-    def _on_connect(self, _client, _userdata, _flags, reason_code, _properties):
+    def _on_connect(self, _client, _userdata, _flags, reason_code, _properties=None):
         if reason_code != 0:
             _debug("MQTT", "connection_rejected", {"reason": str(reason_code)})
             return
@@ -88,7 +95,8 @@ class MqttBridge:
             "port": config.MQTT_PORT,
         })
 
-    def _on_disconnect(self, _client, _userdata, _flags, reason_code, _properties):
+    def _on_disconnect(self, _client, _userdata, *argumen):
+        reason_code = argumen[-2] if len(argumen) >= 2 else argumen[0]
         self.connected.clear()
         _debug("MQTT", "disconnected", {"reason": str(reason_code)})
 
@@ -101,6 +109,12 @@ class MqttBridge:
             return
         payload = json.dumps(value, separators=(",", ":"), ensure_ascii=False)
         info = self.client.publish(topic, payload, qos=qos, retain=retain)
+        if info.rc != mqtt.MQTT_ERR_SUCCESS:
+            _debug("MQTT-PUB", "queue_failed", {
+                "topic": topic,
+                "reason": mqtt.error_string(info.rc),
+            })
+            return
         _debug("MQTT-PUB", "published", {
             "topic": topic,
             "mid": info.mid,
@@ -129,10 +143,13 @@ class MqttBridge:
                 continue
             now = time.monotonic()
 
-            # State broadcast (5 Hz)
-            if now >= next_state:
-                self._publish_state()
-                next_state = now + self.state_interval
+            try:
+                if now >= next_state:
+                    self._publish_state()
+                    next_state = now + self.state_interval
+            except Exception as galat:
+                _debug("MQTT-PUB", "publish_failed", {"reason": str(galat)})
+                next_state = now + 1.0
 
             time.sleep(0.01)
 
