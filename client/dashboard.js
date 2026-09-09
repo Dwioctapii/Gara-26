@@ -12,6 +12,7 @@ const CONNECTION_TIMEOUT_MS = 2000;
 const LOCAL_STATE_STALE_MS = 3000;
 const DEBUG_ACTIVE = true;
 const disableInput = true;
+const disableLocal = true;
 const MQTT_LIBRARY_URL = "https://unpkg.com/mqtt@5/dist/mqtt.min.js";
 const KUNCI_DISABLE_LOCAL = "asv-disable-local-state";
 const MAP_CENTER = [-7.069219, 110.304997];
@@ -64,7 +65,9 @@ let mqttLibraryPromise = null;
 let lastLocalStateAt = 0;
 let dataSocketOpenedAt = 0;
 let stateMqttTerakhir = null;
-let lokalDinonaktifkan = HALAMAN_HTTPS || bacaPilihanDisableLocal();
+let lokalDinonaktifkan = disableLocal
+    ? false
+    : HALAMAN_HTTPS || bacaPilihanDisableLocal();
 const photoRetryAt = { atas: 0, bawah: 0 };
 
 // Map & Visualization Layers
@@ -324,15 +327,24 @@ function connectDataWebSocket() {
 function perbaruiToggleSumber() {
     const toggle = byId("disableLocalToggle");
     const pembungkus = byId("disableLocalControl");
-    if (toggle) toggle.checked = lokalDinonaktifkan;
-    if (toggle) toggle.disabled = HALAMAN_HTTPS;
+    if (toggle) {
+        toggle.checked = !disableLocal && lokalDinonaktifkan;
+        toggle.disabled = disableLocal || HALAMAN_HTTPS;
+    }
     if (pembungkus) pembungkus.classList.toggle("active", lokalDinonaktifkan);
-    if (pembungkus && HALAMAN_HTTPS) {
+    if (pembungkus && disableLocal) {
+        pembungkus.title = "Checkbox Disable Local dimatikan dari konfigurasi dashboard.js";
+    } else if (pembungkus && HALAMAN_HTTPS) {
         pembungkus.title = "Halaman HTTPS wajib memakai cloud; browser memblokir koneksi lokal tanpa TLS";
     }
 }
 
 function aturDisableLocal(dinonaktifkan) {
+    if (disableLocal) {
+        lokalDinonaktifkan = false;
+        perbaruiToggleSumber();
+        return;
+    }
     lokalDinonaktifkan = HALAMAN_HTTPS || Boolean(dinonaktifkan);
     simpanPilihanDisableLocal();
     perbaruiToggleSumber();
